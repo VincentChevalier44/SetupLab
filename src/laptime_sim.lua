@@ -240,7 +240,8 @@ function M.run(track, eff, buf, opts)
     local speed = vb[k1]
     local comb, n = remaining(buf, eff, k1, speed)
     local resist = (lookup1(eff.drag, eff, speed) + lookup1(eff.rollRes, eff, speed)) / mass
-    local decel = lookup2(eff.brake, eff, speed, n) * comb + resist + G * sth[k1]
+    -- ellipse d'adhérence sur l'adhérence seule ; le couple des freins borne à part
+    local decel = min(lookup2(eff.brake, eff, speed, n) * comb, eff.brakeForceMax / mass) + resist + G * sth[k1]
     if decel < 0 then decel = 0 end
     local value = sqrt(speed * speed + 2 * decel * ds)
     if value > vLim[k] then value = vLim[k] end

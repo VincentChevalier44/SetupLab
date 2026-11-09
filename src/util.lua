@@ -9,8 +9,6 @@ M.G = 9.80665
 
 local floor, min, max, huge = math.floor, math.min, math.max, math.huge
 
-M.EPS = 1e-9
-
 -- Limites de format des données externes (D11). Ce ne sont pas des valeurs du PDR : elles
 -- bornent le coût et la mémoire des analyses de texte, quelle que soit la taille des fichiers.
 M.LIMITS = {
@@ -44,22 +42,6 @@ function M.lerp(a, b, t)
   return a + (b - a) * t
 end
 
--- Division protégée (§16.3) : le dénominateur est éloigné de zéro en gardant son signe.
-function M.safeDiv(a, b, eps)
-  eps = eps or M.EPS
-  if b >= 0 and b < eps then
-    b = eps
-  elseif b < 0 and b > -eps then
-    b = -eps
-  end
-  return a / b
-end
-
-function M.round(x, step)
-  step = step or 1
-  return floor(x / step + 0.5) * step
-end
-
 -- Filtre exponentiel du premier ordre ; alpha borné dans [0 ; 1].
 function M.ema(previous, value, alpha)
   if not M.isFinite(previous) then return value end
@@ -83,12 +65,58 @@ function M.get(object, key)
   return nil
 end
 
+M.ERROR_MAX = 200 -- longueur gardée d'un message d'erreur (K.textMax.error)
+
 -- Renvoie (true, r1, r2) ou (false, message borné).
 function M.call(fn, ...)
   if fn == nil then return false, 'absent' end
   local ok, a, b = pcall(fn, ...)
-  if not ok then return false, M.truncate(tostring(a), 200) end
+  if not ok then return false, M.truncate(tostring(a), M.ERROR_MAX) end
   return true, a, b
+end
+
+-- Liste renvoyée par CSP (résultat d'un appel : ok, liste) : une table, ou un objet indexable (cdata, userdata) selon la
+-- version (issue n° 2, CSP 0.2.11 : « format inattendu »), copié en table depuis l'indice 0 s'il existe (tableaux de CSP),
+-- sinon 1. Renvoie la liste, ou nil et la raison (type reçu compris).
+function M.listOf(ok, list)
+  if not ok then return nil, tostring(list) end
+  local kind = type(list)
+  if kind == 'table' then return list end
+  local n = 0
+  if kind == 'cdata' or kind == 'userdata' then
+    local okN, len = pcall(function() return #list end)
+    if okN and M.isFinite(len) and len > 0 then n = math.floor(len) end
+  end
+  if n == 0 then return nil, 'format inattendu (' .. kind .. ')' end
+  local base = M.get(list, 0) ~= nil and 0 or 1
+  local out = {}
+  for i = 0, n - 1 do out[#out + 1] = M.get(list, base + i) end
+  return out
+end
+
+-- Champ numérique d'une structure de CSP (nombre ou cdata) : fini, sinon nil.
+function M.num(object, key)
+  local v = M.get(object, key)
+  if type(v) == 'cdata' then v = tonumber(v) end
+  if M.isFinite(v) then return v end
+  return nil
+end
+
+-- Drapeau d'une structure de CSP : booléen, ou nombre fini (0 : faux) ; sinon nil (NaN, infini, autre type).
+function M.flag(object, key)
+  local v = M.get(object, key)
+  if type(v) == 'boolean' then return v end
+  if type(v) == 'number' or type(v) == 'cdata' then
+    local n = tonumber(v)
+    if M.isFinite(n) then return n ~= 0 end
+  end
+  return nil
+end
+
+-- Structure renvoyée par CSP (table, cdata ou userdata) : lisible champ par champ (M.get).
+function M.isStruct(v)
+  local kind = type(v)
+  return kind == 'table' or kind == 'cdata' or kind == 'userdata'
 end
 
 -- ---------------------------------------------------------------------------
@@ -202,12 +230,32 @@ function M.versionInName(name, genre, wet)
   return v and tonumber(v) or nil
 end
 
+-- Texte UTF-8 bien formé (noms de dossiers Windows : toujours de l'Unicode valide).
+function M.isUtf8(s)
+  local i, n = 1, #s
+  while i <= n do
+    local c = s:byte(i)
+    local extra = nil
+    if c < 0x80 then extra = 0
+    elseif c >= 0xC2 and c <= 0xDF then extra = 1
+    elseif c >= 0xE0 and c <= 0xEF then extra = 2
+    elseif c >= 0xF0 and c <= 0xF4 then extra = 3 end
+    if extra == nil or i + extra > n then return false end
+    for k = i + 1, i + extra do
+      local b = s:byte(k)
+      if b < 0x80 or b > 0xBF then return false end
+    end
+    i = i + extra + 1
+  end
+  return true
+end
+
 -- Identifiant de contenu AC (dossier voiture/circuit, nom de fichier de données) : refuse tout séparateur de chemin,
 -- « .. », les caractères de contrôle, ceux interdits par Windows et les séparateurs du stockage (| # = :) ; espaces,
--- accents et parenthèses des dossiers de mods acceptés (relecture du 29/10/2026).
+-- accents et parenthèses des dossiers de mods acceptés (relecture du 29/10/2026), en UTF-8 bien formé.
 function M.isSafeId(s)
   return type(s) == 'string' and #s > 0 and #s <= M.LIMITS.idChars and s:find('[%c/\\:|#=*?"<>]') == nil
-    and s:find('..', 1, true) == nil and s:find('^[%s%.]') == nil and s:find('[%s%.]$') == nil
+    and s:find('..', 1, true) == nil and s:find('^[%s%.]') == nil and s:find('[%s%.]$') == nil and M.isUtf8(s)
 end
 
 -- Formatage tolérant des nombres pour l'interface et le rapport.
@@ -483,6 +531,8 @@ function M.progressOrder(keys, n)
   end
   return order
 end
+
+M.HASH_MOD = RNG_M -- empreintes cumulées : modulo (2^31 - 1), borne du schéma du stockage
 
 -- Empreinte stable d'une chaîne (graine reproductible par contexte).
 function M.hashString(s)

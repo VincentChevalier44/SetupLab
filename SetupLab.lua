@@ -376,6 +376,13 @@ local function signatureOf(spinners, overrides, compoundIndex, ignored)
   return tostring(Util.hashString(table.concat(parts, ';')))
 end
 
+-- Signature et famille d'un setup lu dans un fichier (crans du fichier) : composé du fichier (TYRES), sinon celui de la
+-- découverte d.
+local function fileSignatures(d, values)
+  local tyres = Util.isFinite(values.TYRES) and values.TYRES or d.compoundIndex
+  return signatureOf(d.setup.spinners, values, tyres), signatureOf(d.setup.spinners, values, tyres, K.familyIgnored)
+end
+
 -- Composé monté (index CSP), lu en direct ; nil si illisible.
 local function liveCompound()
   local ok, car = Util.call(Util.get(host.ac, 'getCar'), 0)
@@ -447,14 +454,12 @@ local function conditionsOf(d)
   -- jamais la consommation du modèle (§0.6, prudence : jamais de panne sèche)
   local fuelRate = rate(v.fuelConsumptionRate, assists.fuelRate)
   -- grip de la piste (relecture du 29/10/2026) : 0 donnait un tour de 6 h sans avertissement, 98 un tour trop rapide
-  local grip, gripIgnored = Datasource.normalizeGrip(v.roadGrip)
+  local grip, gripIgnored = TrackModel.normalizeGrip(v.roadGrip)
   return { airTemp = v.ambientTemperature, roadTemp = v.roadTemperature, roadGrip = grip, roadGripIgnored = gripIgnored,
     surfaceGrip = d.trackModel and d.trackModel.surfaceGrip or 1,
     fuelRate = fuelRate and math.max(1, fuelRate) or nil, wearRate = rate(v.tyreConsumptionRate, assists.tyresWear) }
 end
 
--- Tour simulé avec le setup actuel (§8.2, profil de vitesse du J3) ; mesure le temps de calcul d'une
--- évaluation, hors rendus de main, pour estimer la durée d'un calcul avant son lancement (A13).
 -- Profil du circuit sur le tour simulé avec le setup actuel : virages par vitesse d'apex (lents, moyens, rapides),
 -- chicanes, lignes droites, part du tour à pleine charge, au freinage, en virage rapide ou lent.
 local function trackProfile(t, buf, tick)
@@ -481,6 +486,8 @@ local function trackProfile(t, buf, tick)
   return p
 end
 
+-- Tour simulé avec le setup actuel (§8.2, profil de vitesse du J3) ; mesure le temps de calcul d'une
+-- évaluation, hors rendus de main, pour estimer la durée d'un calcul avant son lancement (A13).
 local function simulateCurrent(d, ctx)
   local cpu, mark = 0, ctx.now()
   local function tick(weight)
@@ -605,7 +612,7 @@ local function discover(ctx)
     end)
     if not okCar then
       d.carBase, d.carBaseMissing, d.space, d.verifyRows, d.optimizable = nil, nil, nil, nil, nil
-      d.carModelError = Util.truncate(tostring(why), 200)
+      d.carModelError = Util.truncate(tostring(why), K.textMax.error)
       log('ERROR', 'car_model', d.carModelError)
     end
     ctx.tick()
@@ -666,8 +673,6 @@ local function scheduleReport(d)
   end)
 end
 
--- Données d'une séance précédente (§13), validées et datées : calibration du composé monté (piste à
--- K.storeCalTempTol près), rugosité de la piste, derniers setups enregistrés.
 -- Réglages de suspension libérés par la rugosité mesurée (H17) ; butées et course avant butée restent
 -- conservées (H16 à confirmer).
 local SUSPENSION_KINDS = { 'spring', 'heave', 'damperSlow', 'damperFast' }
@@ -707,7 +712,7 @@ local function restoreCalibration(d, cal, index, bucket)
   for _, key in ipairs(Calibration.KEYS) do factors[key], identified[key] = cal[key], cal['id_' .. key] == true end
   local key = calKey(index, bucket)
   app.calibrations[key] = { state = 'done', compoundIndex = index, bucket = bucket, runs = 0, result = { factors = factors,
-    usable = true, stored = true, storedAt = cal.stamp, atBound = {}, identified = identified, runs = {},
+    usable = true, stored = true, atBound = {}, identified = identified, runs = {},
     compoundIndex = index } }
   if bucket == app.wet.state then app.calibration = app.calibrations[key] end
   return nil
@@ -744,8 +749,8 @@ end
 -- du 22/10/2026) : retrouvé par son nom sans temps au tour et, si connue, l'empreinte de son contenu. Renvoie le
 -- nouveau nom et le contenu, ou nil.
 local function findRenamed(folder, name, hash)
-  local ok, list = Util.call(Util.get(host.io, 'scanDir'), folder, '*.ini')
-  if not (ok and type(list) == 'table') then return nil end
+  local list = Util.listOf(Util.call(Util.get(host.io, 'scanDir'), folder, '*.ini'))
+  if not list then return nil end
   local root = Util.fileRoot(name)
   for i = 1, math.min(#list, K.scanMaxFiles) do
     local candidate = list[i]
@@ -758,6 +763,8 @@ local function findRenamed(folder, name, hash)
   return nil
 end
 
+-- Données d'une séance précédente (§13), validées et datées : calibration du composé monté (piste à
+-- K.storeCalTempTol près), rugosité de la piste, derniers setups enregistrés.
 local function restoreStored(d)
   local now = stamp()
   local index = d.compoundIndex or -1
@@ -821,6 +828,8 @@ local function onDiscovered(ok, result, cpuMs)
       rememberSetup(result.signature, known)
     end
     app.recorder.protected = protectedSignatures()
+    -- vos temps avec le setup de départ : jamais évincés (gain des versions, tours analysés)
+    app.recorder.laps.protectedFamilies = result.family and { [result.family] = true } or {}
     if app.detectPins and (app.discoverySeq or 0) == (app.loadSeq or 0) then app.detectPins(result) end
     restoreStored(result)
     scheduleReport(result)
@@ -834,7 +843,7 @@ local function onDiscovered(ok, result, cpuMs)
     app.discoveryState = 'idle'
   else
     app.discoveryState = 'failed'
-    app.discoveryError = Util.truncate(tostring(result), 200)
+    app.discoveryError = Util.truncate(tostring(result), K.textMax.error)
     log('ERROR', 'discovery', app.discoveryError)
   end
 end
@@ -915,6 +924,25 @@ local function onlinePause(online)
     return 'Session en ligne : SetupLab est en pause (« Actif en ligne » décoché, onglet RÉGLAGES).'
   end
   return nil
+end
+
+-- Horloge de la séance revenue en arrière (séance recommencée : sim.time repart du début) : les échéances et les instants
+-- retenus sont décalés d'autant, rien ne reste bloqué jusqu'à ce que l'horloge rattrape l'ancienne valeur (relecture du
+-- contexte, nouvelle tentative de l'affinage, arrivée, setup surveillé, fichiers de la mémoire).
+local function clockRewound()
+  local last = app.lastNow
+  app.lastNow = app.now
+  if last == nil or app.now >= last - K.contextPeriod then return end
+  local back = last - app.now
+  app.nextContextAt = math.min(app.nextContextAt - back, app.now)
+  local r = app.refine
+  if r and r.nextAt then r.nextAt = r.nextAt - back end
+  if r and r.minClock then r.minClock = nil end
+  if app.raceFinishAt then app.raceFinishAt = app.raceFinishAt - back end
+  if app.setupWatch and app.setupWatch.since then app.setupWatch.since = app.setupWatch.since - back end
+  for _, m in pairs(app.memoryFiles or {}) do
+    if m.at then m.at = m.at - back end
+  end
 end
 
 local function refreshContext()
@@ -1150,7 +1178,7 @@ local function startCalibration(compoundIndex, bucket)
     elseif result == 'cancelled' then
       c.state = 'cancelled'
     else
-      c.state, c.error = 'failed', Util.truncate(tostring(result), 200)
+      c.state, c.error = 'failed', Util.truncate(tostring(result), K.textMax.error)
       log('ERROR', 'calibration', c.error)
     end
   end)
@@ -1259,7 +1287,7 @@ local function startValidation(kind)
     elseif result == 'cancelled' then
       v.state = 'cancelled'
     else
-      v.state, v.error = 'failed', ok and 'setup non simulable' or Util.truncate(tostring(result), 200)
+      v.state, v.error = 'failed', ok and 'setup non simulable' or Util.truncate(tostring(result), K.textMax.error)
     end
   end)
   return true
@@ -1295,7 +1323,7 @@ local function startMeasureOnly(lap)
     elseif result == 'cancelled' then
       m.state, m.reason = 'failed', 'estimation interrompue : elle reprendra au prochain tour valide'
     else
-      m.state, m.reason = 'failed', Util.truncate(tostring(result), 200)
+      m.state, m.reason = 'failed', Util.truncate(tostring(result), K.textMax.error)
       log('ERROR', 'measure_only', m.reason)
     end
   end)
@@ -1304,6 +1332,17 @@ end
 -- Contrôle croisé avec le chrono d'AC (demande de Vincent du 09/11/2026 : « la télémétrie doit être parfaite ») : à chaque
 -- nouveau meilleur tour d'AC de la séance, une ligne du journal ; un avertissement si ce tour n'entre pas dans les temps
 -- d'AC de SetupLab (et pourquoi).
+-- Tour qui vient de finir, déjà compté par l'enregistreur : il appartient à la séance recommencée.
+local function recreditLap(lap)
+  local f = lap.family and app.recorder.laps.family[Recorder.bestKey(lap.family, lap.bucket)]
+  if f == nil then return end
+  if lap.acValid then f.acBest = lap.time end
+  if lap.valid then
+    f.sessionCount = 1
+    if not (lap.traffic or lap.incident) then f.sessionBest = lap.time end
+  end
+end
+
 local function acBestCheck(lap)
   local okC, car = Util.call(Util.get(host.ac, 'getCar'), 0)
   local ms = okC and car ~= nil and tonumber(Util.get(car, 'bestLapTimeMs')) or nil
@@ -1311,6 +1350,7 @@ local function acBestCheck(lap)
     -- chrono d'AC remis à zéro (séance recommencée, même clé de séance) : vos meilleurs tours aussi
     if app.acBestSeen and Util.isFinite(ms) then
       Recorder.newSession(app.recorder)
+      recreditLap(lap)
       app.acBestSeen = nil
     end
     return
@@ -1318,7 +1358,10 @@ local function acBestCheck(lap)
   local best = ms / 1000
   if app.acBestSeen and math.abs(best - app.acBestSeen) < K.lapTimeEps then return end
   -- chrono d'AC plus lent qu'avant : séance recommencée (même clé de séance) ; vos meilleurs tours repartent de zéro
-  if app.acBestSeen and best > app.acBestSeen then Recorder.newSession(app.recorder) end
+  if app.acBestSeen and best > app.acBestSeen then
+    Recorder.newSession(app.recorder)
+    recreditLap(lap)
+  end
   app.acBestSeen = best
   local same = Util.isFinite(lap.time) and math.abs(lap.time - best) < K.lapTimeEps
   local known = nil
@@ -1504,6 +1547,7 @@ local function update(dt)
   elseif Util.isFinite(dt) and dt > 0 and dt <= K.dtMax then
     app.now = app.now + dt
   end
+  clockRewound()
   if app.now >= app.nextContextAt then
     app.nextContextAt = app.now + K.contextPeriod
     refreshContext()
@@ -1632,7 +1676,7 @@ app.qualiBlocker = qualiBlocker
 -- avant, et le setup de course sera calculé sur le rythme sur le setup qui a déjà été fait en qualification et qui est
 -- validé » ; « l'utilisateur devra saisir le nombre de tours ». Référence de tour rapide validée de ce circuit et de cet
 -- état de piste (qualification, sinon essai), montée dans la voiture (vos tours avec elle donnent le rythme), nombre
--- de tours saisi (gardé par circuit). Renvoie la raison et l'action qui la lève ('qualif', 'load', 'laps'), ou nil.
+-- de tours saisi (gardé par circuit, raceBlocker). Renvoie l'entrée de la mémoire et sa clé, ou nil.
 local function raceReference()
   local bucket = app.wet and app.wet.state or 'sec'
   for _, group in ipairs({ 'qualif', 'essai' }) do
@@ -1656,8 +1700,7 @@ local function raceStarted()
   local d = app.discovery
   if not (l and type(l.values) == 'table' and d and d.setup and type(d.setup.spinners) == 'table') then return false end
   if l.family == nil then
-    local tyres = Util.isFinite(l.values.TYRES) and l.values.TYRES or d.compoundIndex
-    l.family = signatureOf(d.setup.spinners, l.values, tyres, K.familyIgnored)
+    l.family = select(2, fileSignatures(d, l.values))
   end
   local family = app.inCarFamily and app.inCarFamily() or d.family
   return family ~= nil and family == l.family
@@ -1757,7 +1800,6 @@ local function tyreStateOf(d, bucket)
   return CarModel.tyreState(d.carBase, d.compoundSlot, lap, physicalSetup(d, nil))
 end
 
--- ABS actif selon le jeu (absMode > 0 ; 0 : désactivé), sinon nil (electronics.ini).
 -- Coût mesuré d'une évaluation (ms) pour le calcul kind : avec le DRS en qualification s'il est simulé.
 function app.evalCost(kind)
   local s = app.discovery and app.discovery.simCurrent
@@ -1766,6 +1808,7 @@ function app.evalCost(kind)
   return s.evalMs
 end
 
+-- ABS actif selon le jeu (absMode > 0 ; 0 : désactivé), sinon nil (electronics.ini).
 local function absActiveOf(d)
   local live = Datasource.readCarState(host, 0)
   local mode = live.ok and live.values.absMode or nil
@@ -1927,7 +1970,7 @@ local function startCompute(kind, fromPending)
     elseif result == 'cancelled' then
       q.state = 'cancelled'
     else
-      q.state, q.error = 'failed', Util.truncate(tostring(result), 200)
+      q.state, q.error = 'failed', Util.truncate(tostring(result), K.textMax.error)
       log('ERROR', kind, q.error)
     end
   end)
@@ -1968,7 +2011,7 @@ local function proposalOf(kind)
     changed = changed,
     bucket = q.conditions and q.conditions.bucket or 'sec',
     known = { label = 'setup proposé (' .. COMPUTE[kind].label .. ')', predicted = q.result.timeProposed,
-      predictedFrom = q.result.timeCurrent, setup = physicalSetup(d, q.result.deltas, compound and compound.slot),
+      setup = physicalSetup(d, q.result.deltas, compound and compound.slot),
       compoundIndex = compound and compound.index, factors = q.result.factorsUsed } }
 end
 
@@ -2132,7 +2175,7 @@ end
 local function writtenKey()
   local count, sum = 0, 0
   for name in pairs(app.written) do
-    count, sum = count + 1, (sum + (tonumber(Util.hashString(tostring(name))) or 0)) % 2147483647
+    count, sum = count + 1, (sum + (tonumber(Util.hashString(tostring(name))) or 0)) % Util.HASH_MOD
   end
   return count .. ':' .. sum
 end
@@ -2164,8 +2207,8 @@ local function qualiFiles()
   local scan = s.scan
   if not (scan and scan.discovery == d and scan.generation == generation) then
     local candidates = {}
-    local ok, names = Util.call(Util.get(host.io, 'scanDir'), folder, '*.ini')
-    if ok and type(names) == 'table' then
+    local names = Util.listOf(Util.call(Util.get(host.io, 'scanDir'), folder, '*.ini'))
+    if names then
       for i = 1, math.min(#names, K.scanMaxFiles) do
         local name = names[i]
         local version, trial = nil, false
@@ -2192,10 +2235,8 @@ local function qualiFiles()
       scan.i, reads = scan.i + 1, reads + 1
       local okL, text = Util.call(Util.get(host.io, 'load'), folder .. '/' .. f.file)
       if okL and type(text) == 'string' and #text <= K.maxTextBytes then
-        local values = setupValues(text)
-        local tyres = Util.isFinite(values.TYRES) and values.TYRES or d.compoundIndex
         scan.list[#scan.list + 1] = { file = f.file, version = f.version, trial = f.trial, hash = Util.hashString(text),
-          family = signatureOf(d.setup.spinners, values, tyres, K.familyIgnored) }
+          family = select(2, fileSignatures(d, setupValues(text))) }
       end
     end
   end
@@ -2286,13 +2327,20 @@ app.qualiInCar = qualiInCar
 
 -- Le setup en cours a-t-il toutes les valeurs du fichier ? Renvoie vrai, ou faux et la première section
 -- différente (nil si le setup en cours est illisible).
+-- Aides au pilotage : le jeu peut les remplacer, elles ne prouvent rien (règle pluie) ni ne distinguent deux setups.
+local SAME_IGNORED = { ABS = true, TRACTION_CONTROL = true }
+
 local function liveHasValues(target)
   local ok, text = Util.call(Util.get(host.ac, 'stringifyCurrentSetup'), true, false)
   if not (ok and type(text) == 'string') then return false, nil end
   local live = setupValues(text)
   for name, value in pairs(target) do
-    -- niveaux d'aide : les aides du jeu peuvent les remplacer, ils ne prouvent rien (règle pluie)
-    if name ~= 'ABS' and name ~= 'TRACTION_CONTROL' and live[name] ~= value then return false, name end
+    local other = live[name]
+    if not SAME_IGNORED[name] then
+      local same = value == other or (type(value) == 'number' and type(other) == 'number'
+        and math.abs(value - other) <= K.setupValueTol)
+      if not same then return false, name end
+    end
   end
   return true
 end
@@ -2342,14 +2390,13 @@ local function isKept(name)
 end
 
 -- Deux setups identiques, hors réglages changés en roulant (carburant, répartition de freinage) et aides (le jeu
--- peut les remplacer).
-local SAME_IGNORED = { ABS = true, TRACTION_CONTROL = true }
+-- peut les remplacer, SAME_IGNORED).
 local function sameSetup(a, b)
   for name, value in pairs(a) do
     if not (K.familyIgnored[name] or SAME_IGNORED[name]) then
       local other = b[name]
       if type(value) == 'number' and type(other) == 'number' then
-        if math.abs(value - other) > 1e-9 then return false end
+        if math.abs(value - other) > K.setupValueTol then return false end
       elseif value ~= other then
         return false
       end
@@ -2437,7 +2484,7 @@ local function forgetFile(name)
   local r = app.refine
   if r then
     for _, e in ipairs(r.history) do
-      if e.file == name then e.file, e.path, e.recycled = nil, nil, true end
+      if e.file == name then e.file, e.path = nil, nil end
     end
   end
   for kind, last in pairs(app.lastSaved or {}) do
@@ -2581,11 +2628,8 @@ local function refreshMemory()
           m.path, m.text, m.signature, m.family = path, text, cached.signature, cached.family
           app.written[e.file] = e.hash
         else
-          local values = setupValues(text)
           m.path, m.text = path, text
-          local tyres = Util.isFinite(values.TYRES) and values.TYRES or d.compoundIndex
-          m.signature = signatureOf(d.setup.spinners, values, tyres)
-          m.family = signatureOf(d.setup.spinners, values, tyres, K.familyIgnored)
+          m.signature, m.family = fileSignatures(d, setupValues(text))
           app.written[e.file] = e.hash
           app.memoryFiles[path] = { hash = e.hash, text = text, signature = m.signature, family = m.family, at = app.now }
         end
@@ -2664,8 +2708,8 @@ local function requestLoad(kind, where)
     return
   end
   -- double clic : le même fichier redemandé aussitôt ne recharge rien (le constat peut finir en une image)
-  local last = app.lastLoadRequest
-  if last and last.path == saved.path and (app.frameNo or 0) - last.frame < K.loadRepeatFrames then
+  local lastRequest = app.lastLoadRequest
+  if lastRequest and lastRequest.path == saved.path and (app.frameNo or 0) - lastRequest.frame < K.loadRepeatFrames then
     app.ui.message = 'Chargement déjà demandé : ' .. tostring(saved.name) .. '.'
     return
   end
@@ -2679,7 +2723,7 @@ local function requestLoad(kind, where)
   if already then
     local okA, liveText = Util.call(Util.get(host.ac, 'stringifyCurrentSetup'), true, false)
     local live = okA and type(liveText) == 'string' and setupValues(liveText) or nil
-    for _, section in ipairs({ 'ABS', 'TRACTION_CONTROL' }) do
+    for section in pairs(SAME_IGNORED) do
       if live and target[section] ~= nil and live[section] ~= nil and target[section] ~= live[section] then already = false end
     end
   end
@@ -3424,7 +3468,7 @@ local function refineFinish(r, q)
         local h = r.history[i]
         if h.view then
           views = views + 1
-          if views > 3 then h.view = nil end
+          if views > K.refineViewsKept then h.view = nil end
         end
       end
       -- même setup déjà enregistré à la main : validable sans nouveau fichier
@@ -3478,7 +3522,7 @@ local function refineTick()
   local kind = r.kind
   -- minutes de roulage avec le setup en cours (en piste, voiture qui roule, jeu non en pause)
   local now = app.now
-  if r.minClock and now > r.minClock and now - r.minClock < 1 and not app.recordContext.paused and carRolling() then
+  if r.minClock and now > r.minClock and now - r.minClock < K.refineClockGapMax and not app.recordContext.paused and carRolling() then
     r.minTime = (r.minTime or 0) + (now - r.minClock)
   end
   r.minClock = now
@@ -3569,7 +3613,7 @@ app.refineTick = function()
   local ok, err = pcall(refineTick)
   if not ok then
     app.perf.errors = app.perf.errors + 1
-    if app.refine then app.refine.waiting = 'erreur interne : ' .. Util.truncate(tostring(err), 200) end
+    if app.refine then app.refine.waiting = 'erreur interne : ' .. Util.truncate(tostring(err), K.textMax.error) end
     log('ERROR', 'refine', err)
   end
 end
@@ -3579,8 +3623,8 @@ end
 local function lastVersionOnDisk(kind)
   local folder = Exporter.targetFolder(host)
   if folder == nil then return 0 end
-  local ok, list = Util.call(Util.get(host.io, 'scanDir'), folder, '*.ini')
-  if not (ok and type(list) == 'table') then return 0 end
+  local list = Util.listOf(Util.call(Util.get(host.io, 'scanDir'), folder, '*.ini'))
+  if not list then return 0 end
   local top = 0
   for i = 1, math.min(#list, K.scanMaxFiles) do
     for _, w in pairs(Config.fileWords) do
@@ -4103,10 +4147,8 @@ local function raceFrom(file)
     app.ui.message = 'Chargement impossible : ' .. tostring(file) .. ' a changé depuis sa validation.'
     return false
   end
-  local values = setupValues(text)
-  local tyres = Util.isFinite(values.TYRES) and values.TYRES or d.compoundIndex
   setLoadTarget('quali', { file = file, path = path, text = text, hash = choice.hash, origin = 'memory',
-    bucket = app.wet and app.wet.state or 'sec', signature = signatureOf(d.setup.spinners, values, tyres) })
+    bucket = app.wet and app.wet.state or 'sec', signature = (fileSignatures(d, setupValues(text))) })
   requestLoad('quali', 'memory')
   return app.loadCheck ~= nil and app.loadCheck.path == path
 end
@@ -4232,7 +4274,7 @@ app.autoTick = function()
   if not ok then
     app.perf.errors = app.perf.errors + 1
     app.auto = false
-    app.ui.message = 'SetupLab mis en veille : erreur interne (' .. Util.truncate(tostring(err), 200) .. ').'
+    app.ui.message = 'SetupLab mis en veille : erreur interne (' .. Util.truncate(tostring(err), K.textMax.error) .. ').'
     log('ERROR', 'auto', err)
   end
 end
@@ -4327,7 +4369,7 @@ local function handleIntents(intents)
       local ok, err = pcall(saveResult, kind)
       if not ok then
         app.perf.errors = app.perf.errors + 1
-        app.ui.message = 'Enregistrement interrompu par une erreur interne : ' .. Util.truncate(tostring(err), 200)
+        app.ui.message = 'Enregistrement interrompu par une erreur interne : ' .. Util.truncate(tostring(err), K.textMax.error)
         if app[kind] then app[kind].saveStatus = { ok = false, text = app.ui.message } end
         log('ERROR', kind .. '_save', app.ui.message)
       end
@@ -4491,7 +4533,6 @@ SETUPLAB = { app = app, release = release, version = Config.version }
 
 app.clock, app.clockReason, app.clockSource = Caps.makeClock(host.ffi, host.preciseClock)
 app.static = Caps.probeStatic(host)
-if app.settings.debugLog then app.log.maxLevel = Util.LEVELS.DEBUG end
 log('INFO', 'start', Config.appName .. ' ' .. Config.version .. ' démarré ; CSP ' .. tostring(app.static.version)
   .. ' build ' .. tostring(app.static.versionCode))
 if app.clock == nil then log('WARN', 'clock', 'Horloge précise indisponible (' .. tostring(app.clockReason) .. ') : repli quota') end
@@ -4563,7 +4604,7 @@ function script.SETUPLAB__MAIN(_)
   measure(loadReadiness)
   if not okI then
     app.perf.errors = app.perf.errors + 1
-    app.ui.message = 'Erreur interne : ' .. Util.truncate(tostring(errI), 200)
+    app.ui.message = 'Erreur interne : ' .. Util.truncate(tostring(errI), K.textMax.error)
     log('ERROR', 'intents', errI)
   end
 end
@@ -4588,7 +4629,7 @@ function script.SETUPLAB__TRACK(_)
   measure(loadReadiness)
   if not okI then
     app.perf.errors = app.perf.errors + 1
-    app.ui.message = 'Erreur interne : ' .. Util.truncate(tostring(errI), 200)
+    app.ui.message = 'Erreur interne : ' .. Util.truncate(tostring(errI), K.textMax.error)
     log('ERROR', 'intents', errI)
   end
 end

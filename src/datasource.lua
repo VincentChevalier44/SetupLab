@@ -5,6 +5,7 @@
 
 local Util = require('src/util')
 local Config = require('src/config')
+local TrackModel = require('src/track_model')
 local K = Config.K
 
 local M = {}
@@ -17,20 +18,7 @@ local floor, min, huge = math.floor, math.min, math.huge
 
 local get, call = Util.get, Util.call
 
-local function num(object, key)
-  local v = get(object, key)
-  if type(v) == 'cdata' then v = tonumber(v) end
-  if Util.isFinite(v) then return v end
-  return nil
-end
-
-local function bool(object, key)
-  local v = get(object, key)
-  if type(v) == 'boolean' then return v end
-  if type(v) == 'cdata' then v = tonumber(v) end
-  if type(v) == 'number' and v == v then return v ~= 0 end
-  return nil
-end
+local num, bool = Util.num, Util.flag
 
 local function str(object, key, maxLength)
   local v = get(object, key)
@@ -44,33 +32,12 @@ local function length(object)
   return 0
 end
 
--- Liste renvoyée par CSP : une table, ou un objet indexable (cdata, userdata) selon la version (issue n° 2, CSP 0.2.11 :
--- « format inattendu »). Renvoie la liste, ou nil et la raison (type reçu compris).
-local function listOf(ok, list)
-  if not ok then return nil, tostring(list) end
-  local kind = type(list)
-  if kind == 'table' then return list end
-  local n = (kind == 'cdata' or kind == 'userdata') and length(list) or 0
-  if n == 0 then return nil, 'format inattendu (' .. kind .. ')' end
-  -- objet indexable : copie en table, depuis l'indice 0 s'il existe (tableaux de CSP), sinon 1
-  local base = get(list, 0) ~= nil and 0 or 1
-  local out = {}
-  for i = 0, n - 1 do out[#out + 1] = get(list, base + i) end
-  return out
-end
-
--- Grip de la piste lu dans CSP : en pour cent (1,5 à K.roadGripPercentMax) ramené à 0…1 ; hors de K.roadGripMin…Max :
--- aberrant, nil (et la valeur lue, dite). Renvoie grip, ignoré.
-function M.normalizeGrip(raw)
-  local grip = raw
-  if Util.isFinite(grip) and grip > 1.5 and grip <= K.roadGripPercentMax then grip = grip / 100 end
-  if Util.isFinite(grip) and (grip < K.roadGripMin or grip > K.roadGripMax) then return nil, raw end
-  return grip, nil
-end
+local listOf = Util.listOf
+local TM = K.textMax
 
 local function callString(fn, ...)
   local ok, v = call(fn, ...)
-  if ok and type(v) == 'string' then return Util.truncate(v, 128) end
+  if ok and type(v) == 'string' then return Util.truncate(v, TM.value) end
   return nil
 end
 
@@ -595,14 +562,14 @@ local function copyNumberList(list, maxItems)
 end
 
 function M.copySpinner(raw)
-  local name = str(raw, 'name', 64)
+  local name = str(raw, 'name', TM.name)
   local value, lo, hi = num(raw, 'value'), num(raw, 'min'), num(raw, 'max')
   if name == nil or value == nil or lo == nil or hi == nil then return nil end
   local items = get(raw, 'items')
   local itemValues = get(raw, 'itemValues')
   return {
     name = name,
-    label = str(raw, 'label', 96) or name,
+    label = str(raw, 'label', TM.label) or name,
     min = lo, max = hi, value = value,
     step = num(raw, 'step'),
     displayMultiplier = num(raw, 'displayMultiplier'),
@@ -610,7 +577,7 @@ function M.copySpinner(raw)
     showClicksMode = num(raw, 'showClicksMode'),
     visible = bool(raw, 'visible'),
     readOnly = bool(raw, 'readOnly'),
-    units = str(raw, 'units', 24),
+    units = str(raw, 'units', TM.units),
     items = items ~= nil and copyStrings(items, K.maxSpinnerItems) or nil,
     itemValues = itemValues ~= nil and copyNumberList(itemValues, K.maxSpinnerItems) or nil,
   }
@@ -661,7 +628,7 @@ function M.spinnersFromSetupIni(host, setupIni, tick, ratios)
     local value = Util.parseNumber(Util.iniGet(file, name, 'VALUE'))
     local lo, hi, step = Util.parseNumber(sec.MIN), Util.parseNumber(sec.MAX), Util.parseNumber(sec.STEP) or 1
     local clicksMode = Util.parseNumber(sec.SHOW_CLICKS) or 0
-    local label = Util.truncate(tostring(sec.NAME or name), 96)
+    local label = Util.truncate(tostring(sec.NAME or name), TM.label)
     local sp = nil
     local entries = sec.RATIOS and type(ratios) == 'table' and ratios[tostring(sec.RATIOS):lower()] or nil
     if type(name) ~= 'string' or #name > 64 or value == nil then
@@ -738,14 +705,14 @@ function M.readSetup(host, ctx, setupIni, ratios)
   if oke and type(editable) == 'boolean' then s.editable = editable end
   local okl, legal, reason = call(get(ac, 'getCarSetupState'))
   if okl and type(legal) == 'string' then
-    s.legal = Util.truncate(legal, 16)
-    if type(reason) == 'string' then s.illegalReason = Util.truncate(reason, 200) end
+    s.legal = Util.truncate(legal, TM.flag)
+    if type(reason) == 'string' then s.illegalReason = Util.truncate(reason, TM.error) end
   end
-  local okb, tabs = call(get(ac, 'getSetupTabs'))
-  if okb and type(tabs) == 'table' then
-    for i = 1, min(length(tabs), 32) do
-      local tab = get(tabs, i)
-      s.tabs[#s.tabs + 1] = { name = str(tab, 'name', 64), label = str(tab, 'label', 64), visible = bool(tab, 'visible') }
+  local tabs = listOf(call(get(ac, 'getSetupTabs')))
+  if tabs then
+    for i = 1, min(#tabs, K.maxSetupTabs) do
+      local tab = tabs[i]
+      s.tabs[#s.tabs + 1] = { name = str(tab, 'name', TM.name), label = str(tab, 'label', TM.name), visible = bool(tab, 'visible') }
     end
   end
   ctx.tick()
@@ -943,7 +910,7 @@ function M.parseDeclaredLength(text)
   if type(text) ~= 'string' then return nil end
   local raw = text:match('"length"%s*:%s*"([^"]*)"') or text:match('"length"%s*:%s*([%d%.]+)')
   if raw == nil then return nil end
-  raw = Util.truncate(raw, 32)
+  raw = Util.truncate(raw, TM.short)
   local intPart, sep, frac, unitText = raw:lower():match('^%s*(%d+)([%.,]?)(%d*)%s*(%a*)%s*$')
   local unit = unitText and LENGTH_UNITS[unitText] or nil
   if intPart == nil or unit == nil then return nil, raw end
@@ -1079,12 +1046,12 @@ function M.readSession(host)
     end
   end
   local okA, assists = call(get(ac, 'getAssists'))
-  if okA and type(assists) == 'table' then
+  if okA and Util.isStruct(assists) then
     s.assists = {
       fuelRate = num(assists, 'fuelRate'), tyresWear = num(assists, 'tyresWear'),
       damageRate = num(assists, 'damageRate'), tyresBlankets = bool(assists, 'tyresBlankets'),
       slipstream = num(assists, 'slipstream'),
-      abs = str(assists, 'abs', 16), tractionControl = str(assists, 'tractionControl', 16),
+      abs = str(assists, 'abs', TM.flag), tractionControl = str(assists, 'tractionControl', TM.flag),
     }
   end
   s.wet = isWet(s.values)
@@ -1135,7 +1102,7 @@ function M.readContext(host)
   c.carsCount = num(sim, 'carsCount')
   c.rainWetness, c.rainIntensity, c.rainWater = num(sim, 'rainWetness'), num(sim, 'rainIntensity'), num(sim, 'rainWater')
   c.airTemp, c.roadTemp = num(sim, 'ambientTemperature'), num(sim, 'roadTemperature')
-  c.roadGrip, c.roadGripIgnored = M.normalizeGrip(num(sim, 'roadGrip'))
+  c.roadGrip, c.roadGripIgnored = TrackModel.normalizeGrip(num(sim, 'roadGrip'))
   c.carId = callString(get(ac, 'getCarID'), 0)
   c.trackFullId = callString(get(ac, 'getTrackFullID'), '/')
   c.key = tostring(c.carId) .. '|' .. tostring(c.trackFullId)
@@ -1154,14 +1121,14 @@ function M.fingerprint(car, tick)
   for _, name in ipairs(car.iniOrder or {}) do
     local data = car.ini[name]
     if data and data.sections then
-      h = (h * 31 + Util.hashString(name)) % 2147483647
+      h = (h * 31 + Util.hashString(name)) % Util.HASH_MOD
       for _, section in ipairs(data.order or {}) do
         local values = data.sections[section] or {}
         local keys = {}
         for key in pairs(values) do keys[#keys + 1] = key end
         table.sort(keys)
         for _, key in ipairs(keys) do
-          h = (h * 31 + Util.hashString(section .. '.' .. key .. '=' .. tostring(values[key]))) % 2147483647
+          h = (h * 31 + Util.hashString(section .. '.' .. key .. '=' .. tostring(values[key]))) % Util.HASH_MOD
         end
         tick()
       end

@@ -32,7 +32,15 @@ local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 
 local PRIMES = { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101,
   103, 107, 109, 113, 127, 131, 137, 139, 149, 151 }
-M.MAX_DIMS = #PRIMES
+M.MAX_DIMS = #PRIMES -- dimensions tirées en suite de Halton ; au-delà, tirage pseudo-aléatoire (Util.rngNext)
+
+-- Point au setup actuel (tous les écarts nuls) : comparé par valeur, les points sont des copies.
+local function isZero(x)
+  for _, v in ipairs(x) do
+    if v ~= 0 then return false end
+  end
+  return true
+end
 
 -- Terme i (≥ 1) de la suite de Van der Corput en base b (radical inverse).
 function M.radicalInverse(i, b)
@@ -134,7 +142,7 @@ function M.run(problem, ctx, state)
     if exhausted() then break end
     local x = {}
     for d = 1, n do
-      local u = (M.radicalInverse(i, PRIMES[d]) + shift[d]) % 1
+      local u = PRIMES[d] and (M.radicalInverse(i, PRIMES[d]) + shift[d]) % 1 or Util.rngNext(rng)
       local span = dims[d].hi - dims[d].lo + 1
       x[d] = dims[d].lo + min(span - 1, floor(u * span))
     end
@@ -547,8 +555,7 @@ local function hotPressureOf(p, var, d)
   local tyre = var.axle == 'F' and compound.front or compound.rear
   local cold = Space.physical(var, d)
   if cold == nil then return nil, tyre end
-  local temp = p.conditions['pressureTemp' .. var.axle] or CarModel.runningTemp(tyre, p.conditions)
-  return CarModel.hotPressure(cold, p.conditions.airTemp, temp) + (p.conditions['pressureOffset' .. var.axle] or 0), tyre
+  return (CarModel.axleHotPressure(p.conditions, tyre, cold, var.axle)), tyre
 end
 
 -- Bande admissible des crans de pression (§8.6, §10.6) : la pression à chaud proposée ne s'éloigne jamais
@@ -651,11 +658,10 @@ function M.tyreReport(p, deltas)
     local var = args.space.byKey['pressure' .. axle]
     local t = p.tyres and p.tyres[axle] or {}
     local lo, hi = CarModel.tyreWindow(tyre)
-    local temp = p.conditions['pressureTemp' .. axle] or CarModel.runningTemp(tyre, p.conditions)
-    local offset = p.conditions['pressureOffset' .. axle] or 0
+    local temp = select(2, CarModel.axleHotPressure(p.conditions, tyre, 0, axle))
     local function hotOf(d)
       local cold = var and Space.physical(var, d) or nil
-      return cold and CarModel.hotPressure(cold, p.conditions.airTemp, temp) + offset or nil
+      return cold and (CarModel.axleHotPressure(p.conditions, tyre, cold, axle)) or nil
     end
     local camberGuard = nil
     if t.spread and t.spread > K.camberSpreadMax then
@@ -810,7 +816,7 @@ function M.runQuali(p, ctx, state)
     end
     if robustBase == nil then robustBase = losses(zero) end
     -- setup actuel : aucune perte au-delà de la sienne, par définition
-    if x == zero then return 0, used end
+    if isZero(x) then return 0, used end
     local mine = losses(x)
     local worst = 0
     for i = 1, #mine do worst = max(worst, mine[i] - robustBase[i]) end
@@ -1144,7 +1150,7 @@ function M.runRace(p, ctx, state)
     end
     if robustBase == nil then robustBase = losses(zero) end
     -- setup actuel : aucune perte au-delà de la sienne, par définition
-    if x == zero then return 0, used end
+    if isZero(x) then return 0, used end
     local mine = losses(x)
     local worst = 0
     for i = 1, #mine do worst = max(worst, mine[i] - robustBase[i]) end

@@ -287,8 +287,6 @@ tests['T06 segments, chicanes, zones DRS, grip de surface'] = function()
   end
   T.near(spa.surfaceGrip, 0.98, 1e-9)
   T.eq(TrackModel.surfaceGrip(nil), 1)
-  local mix = TrackModel.mix(spa)
-  T.ok(mix.straight > 0.3 and mix.straight < 0.9, 'part de lignes droites ' .. mix.straight)
   local ring = assert(TrackModel.build(rawFrom(circle(200, 1, 1)), nil, 2))
   local wrap = TrackModel.drsZones(Util.parseIni('[ZONE_0]\nDETECTION=0.95\nSTART=0.98\nEND=0.05\n'), ring)
   T.near(wrap[1].length, 0.07 * ring.length, 0.5, 'zone à cheval sur la ligne')

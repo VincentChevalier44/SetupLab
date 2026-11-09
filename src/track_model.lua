@@ -17,6 +17,15 @@ local K = Config.K
 
 local M = {}
 
+-- Grip de la piste lu dans CSP : en pour cent (1,5 à K.roadGripPercentMax) ramené à 0…1 ; hors de K.roadGripMin…Max :
+-- aberrant, nil (et la valeur lue, dite). Renvoie grip, ignoré.
+function M.normalizeGrip(raw)
+  local grip = raw
+  if Util.isFinite(grip) and grip > 1.5 and grip <= K.roadGripPercentMax then grip = grip / 100 end
+  if Util.isFinite(grip) and (grip < K.roadGripMin or grip > K.roadGripMax) then return nil, raw end
+  return grip, nil
+end
+
 local sqrt, abs, floor, max, min, atan = math.sqrt, math.abs, math.floor, math.max, math.min, math.atan
 
 local TICK_POINTS = 256
@@ -518,17 +527,6 @@ function M.annotate(t, sim)
     end
   end
   return t
-end
-
--- Répartition du tour par classe (§10.1 : aileron selon la part de virages rapides et de lignes droites).
-function M.mix(t)
-  local m = { straight = 0, lent = 0, moyen = 0, rapide = 0 }
-  for _, seg in ipairs(t.segments) do
-    local key = seg.kind == 'straight' and 'straight' or (seg.class or 'moyen')
-    m[key] = m[key] + seg.length
-  end
-  for key, value in pairs(m) do m[key] = value / t.length end
-  return m
 end
 
 return M

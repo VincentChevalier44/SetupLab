@@ -20,34 +20,20 @@ local M = {}
 
 local K = Config.K
 
+-- Couleurs des contrôles ImGui (repli sans le thème) : jetons du kit « Racing 26 » (src/skin.lua), une seule palette.
+local C = Skin.COLORS
+local function alpha(c, a) return { c[1], c[2], c[3], a } end
 local STATUS_COLOR = {
-  -- kit « Racing 26 » (refonte de Vincent du 02/11/2026) : fond quasi noir, panneaux anthracite, cyan d'action,
-  -- couleurs de course (gain vert, à confirmer ambre, perte rouge, meilleur tour violet)
-  available = { 0.180, 0.878, 0.498, 1 },
-  pending = { 1.000, 0.761, 0.239, 1 },
-  unavailable = { 1.000, 0.353, 0.306, 1 },
-  na = { 0.553, 0.580, 0.627, 1 },
-  text = { 0.933, 0.941, 0.953, 1 },
-  muted = { 0.553, 0.580, 0.627, 1 },
-  accent = { 0.094, 0.773, 1.000, 1 },
-  best = { 0.698, 0.424, 1.000, 1 },
-  tile = { 0.082, 0.094, 0.114, 1 },
-  line = { 0.137, 0.153, 0.180, 1 },
-  field = { 0.114, 0.125, 0.153, 1 },
-  fieldHover = { 0.165, 0.184, 0.224, 1 },
-  accentDark = { 0.024, 0.133, 0.176, 1 },
-  bg = { 0.039, 0.043, 0.055, 0.98 },
-  overlay = { 0.067, 0.075, 0.094, 0.96 }, -- fond de l'overlay en jeu : celui des panneaux
-  -- boutons de l'étape suivante (décision de Vincent du 22/10/2026 : plus visibles) ; couleurs du thème Racing 26, et
-  -- texte sombre lisible dans les trois états (contraste d'au moins 5:1, bouton pressé compris)
-  primaryButton = { 0.094, 0.773, 1.000, 1 }, primaryButtonHovered = { 0.435, 0.859, 1.000, 1 },
-  primaryButtonActive = { 0.071, 0.659, 0.871, 1 },
-  goButton = { 0.180, 0.878, 0.498, 1 }, goButtonHovered = { 0.361, 0.922, 0.612, 1 }, goButtonActive = { 0.149, 0.749, 0.427, 1 },
-  dangerButton = { 1.000, 0.353, 0.306, 1 }, dangerButtonHovered = { 1.000, 0.478, 0.439, 1 },
-  dangerButtonActive = { 0.902, 0.318, 0.275, 1 },
-  -- texte de ces boutons, sombre sur leur aplat clair (contrôles ImGui, sans le thème)
-  primaryButtonText = { 0.012, 0.094, 0.125, 1 }, goButtonText = { 0.016, 0.090, 0.051, 1 },
-  dangerButtonText = { 0.141, 0.024, 0.016, 1 },
+  available = C.go, pending = C.warn, unavailable = C.danger, na = C.grey,
+  text = C.light, muted = C.grey, accent = C.blue, best = C.best,
+  tile = C.bar, line = C.line, field = C.control, fieldHover = C.fieldHover, accentDark = C.select,
+  bg = C.bg, overlay = alpha(C.panel, 0.96), -- fond de l'overlay en jeu : celui des panneaux
+  -- boutons de l'étape suivante (décision de Vincent du 22/10/2026 : plus visibles) ; texte sombre lisible dans les trois
+  -- états (contraste d'au moins 5:1, bouton pressé compris)
+  primaryButton = C.blue, primaryButtonHovered = C.blueHover, primaryButtonActive = C.blueActive,
+  goButton = C.go, goButtonHovered = C.goHover, goButtonActive = C.goActive,
+  dangerButton = C.danger, dangerButtonHovered = C.dangerHover, dangerButtonActive = C.dangerActive,
+  primaryButtonText = C.dark, goButtonText = C.goText, dangerButtonText = C.dangerText,
 }
 
 function M.new()
@@ -102,7 +88,7 @@ function M.translating(host)
   M.skinStatus = okA and 'actif' or ('indisponible : ui.' .. tostring(missing) .. ' absente')
   if okA and host.rgbm and host.vec2 then
     okS, skin = pcall(Skin.new, real, host.rgbm, host.vec2, function(s) return L.t(s) end, host.fontDir)
-    if not okS then M.skinStatus = 'en échec : ' .. Util.truncate(tostring(skin), 160) end
+    if not okS then M.skinStatus = 'en échec : ' .. Util.truncate(tostring(skin), K.textMax.status) end
   end
   if okS and skin then
     for _, name in ipairs({ 'text', 'textWrapped', 'textColored', 'drawText', 'measureText', 'pushFont', 'popFont', 'checkbox' }) do
@@ -152,7 +138,6 @@ local function hostFor(host, app)
   end
   return h
 end
-M.hostFor = hostFor
 
 -- Couleurs construites une seule fois (rgbm est fourni par l'hôte).
 local function colors(state, host)
@@ -498,11 +483,11 @@ end
 -- Mise en forme
 -- ---------------------------------------------------------------------------
 
--- Temps au tour « m:ss.mmm ».
+-- Temps au tour « m:ss.mmm », arrondi au millième d'abord (jamais « 1:60.000 »).
 function M.lapTime(seconds)
   if not Util.isFinite(seconds) then return '—' end
-  local m = math.floor(seconds / 60)
-  return string.format('%d:%06.3f', m, seconds - 60 * m)
+  local ms = math.floor(seconds * 1000 + 0.5)
+  return string.format('%d:%02d.%03d', math.floor(ms / 60000), math.floor(ms / 1000) % 60, ms % 1000)
 end
 
 -- Valeur physique d'un réglage avec son unité d'affichage.
@@ -549,7 +534,7 @@ function M.durationText(estimate, target, slow)
   local text = ', durée estimée ≈ ' .. Util.fmt(estimate, 0) .. ' s'
   local long = estimate > target
   if long then text = text .. ' : plus de ' .. target .. ' s, baisser le budget dans l\'onglet Réglages pour aller plus vite' end
-  if slow then text = text .. ' (sous 60 images/s, la tranche de calcul est réduite)' end
+  if slow then text = text .. ' (sous ' .. K.fpsTarget .. ' images/s, la tranche de calcul est réduite)' end
   return text, long
 end
 
@@ -710,7 +695,6 @@ local function compoundLines(host, r, palette)
   if c.note then wrapped(host, c.note, palette.pending) end
   if c.calibrationNote then wrapped(host, c.calibrationNote, palette.pending) end
 end
-M.compoundLines = compoundLines
 
 -- Pneus par essieu (§8.6) : température mesurée contre la fenêtre, pressions à chaud prévues, idéale et
 -- mesurée (tableau) ; surchauffe signalée (pression jamais abaissée), notes en dessous.
@@ -905,7 +889,7 @@ local function changesTable(host, kind, r, palette)
     if c.atBound then why = (why and (why .. '\n') or '') .. 'À confirmer : optimum en limite de la plage explorée.' end
     local label = { text = c.var.label, color = c.atBound and palette.pending or nil, tip = why }
     local gain = c.atBound and { text = 'à confirmer', color = palette.pending, tip = 'Optimum en limite de la plage explorée.' }
-      or { text = Util.fmt(c.contribution, 3), color = c.contribution > 0 and palette.available or palette.muted }
+      or { text = gainText(c.contribution), color = c.contribution > 0 and palette.available or palette.muted }
     if narrow then
       rows[#rows + 1] = { label, from .. ' › ' .. to .. ' (' .. clicks .. ')', gain }
     else
@@ -1084,16 +1068,12 @@ local function realText(stats, kind)
   return M.lapTime(t) .. ' (' .. (kind == 'race' and 'moy. ' or '') .. n .. ' tour' .. s .. ')'
 end
 
-local function effectGain(gain)
-  return gainText(gain)
-end
-
--- Une ligne d'un réglage changé : « Aileron arrière 6° › 2° (+0,341 s) ».
+-- Une ligne d'un réglage changé : « Aileron arrière 6° › 2° (-0.341 s) » (négatif : plus rapide).
 local function itemText(e, item)
   local c = item.change
   if c then
     return L.t(c.var.label) .. ' ' .. M.physicalText(c.var.kind, c.from) .. ' › ' .. M.physicalText(c.var.kind, c.to)
-      .. ' (' .. effectGain(c.contribution or 0) .. ')'
+      .. ' (' .. gainText(c.contribution or 0) .. ')'
   elseif item.compound then
     return (L.t('Composé de pneus : %s'):gsub('%%s', tostring(e.compound and e.compound.name), 1))
   end
@@ -1131,7 +1111,7 @@ local function effectsList(host, app, intents, e, palette, kind)
   if not open then return end
   for _, g in ipairs(groups) do
     withFont(host, 'Small', function()
-      colored(host, L.t(g.label):upper() .. ' · ' .. (L.t('%s prévu'):gsub('%%s', effectGain(g.contribution or 0), 1)),
+      colored(host, L.t(g.label):upper() .. ' · ' .. (L.t('%s prévu'):gsub('%%s', gainText(g.contribution or 0), 1)),
         palette.muted)
     end)
     for _, item in ipairs(g.items) do
@@ -3069,7 +3049,7 @@ end
 M.tip, M.realLaps, M.realTime, M.versionLaps, M.realText = tip, realLaps, realTime, versionLaps, realText
 M.cleanBestApart = cleanBestApart
 M.raceRun, M.raceIn, M.raceEnd, M.raceLapsLine = raceRun, raceIn, raceEnd, raceLapsLine
-M.gainText, M.effectGain, M.itemText, M.KIND, M.loadLabel, M.LOAD_TIP = gainText, effectGain, itemText, KIND, loadLabel, LOAD_TIP
+M.gainText, M.itemText, M.KIND, M.loadLabel, M.LOAD_TIP = gainText, itemText, KIND, loadLabel, LOAD_TIP
 M.START_NAMES, M.sessionRaceLaps = START_NAMES, sessionRaceLaps
 M.FACTOR_ORDER, M.FACTOR_LABELS = FACTOR_ORDER, FACTOR_LABELS
 M.overlaySetup, M.overlayChanges, M.capsCounts = overlaySetup, overlayChanges, Caps.countByStatus

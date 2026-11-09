@@ -362,4 +362,91 @@ tests['IS03 CSP : crans renvoyés en objet indexable (base 0) : tous lus'] = fun
   T.eq(spinners[#spinners].name, real[#real].name, 'le dernier compris')
 end
 
+-- Issue n° 2, suite : les listes de CSP (onglets du setup, menu d'arrêt ; aussi fichiers du dossier de setups et fenêtres
+-- d'app) passent par Util.listOf, la structure des aides par Util.isStruct : lues aussi quand CSP les renvoie en objet.
+tests['IS04 CSP : onglets, menu d\'arrêt et aides renvoyés en objet : lus'] = function()
+  local Util = require('src/util')
+  local Datasource = require('src/datasource')
+  local Exporter = require('src/exporter')
+  local function proxyOf(real, base)
+    local proxy = newproxy(true)
+    local mt = getmetatable(proxy)
+    mt.__index = function(_, i)
+      if type(i) == 'number' then return real[i + 1 - base] end
+      return real[i]
+    end
+    mt.__len = function() return #real end
+    return proxy
+  end
+  -- Util.listOf : table telle quelle, objet indexable depuis 0 ou 1, refus avec le type reçu
+  local t = { 'a', 'b' }
+  T.eq(Util.listOf(true, t), t)
+  T.eq(table.concat(Util.listOf(true, proxyOf({ 'a', 'b', 'c' }, 0)), ','), 'a,b,c', 'depuis 0')
+  T.eq(table.concat(Util.listOf(true, proxyOf({ 'a', 'b', 'c' }, 1)), ','), 'a,b,c', 'depuis 1')
+  local none, why = Util.listOf(true, 42)
+  T.eq(none, nil)
+  T.eq(why, 'format inattendu (number)')
+  T.eq(select(2, Util.listOf(false, 'absent')), 'absent')
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  -- onglets du menu de setup
+  local tabs = h.ac.getSetupTabs()
+  h.ac.getSetupTabs = function() return proxyOf(tabs, 0) end
+  local s = Datasource.readSetup(h, Util.syncContext(), nil, nil)
+  T.eq(#s.tabs, #tabs, 'onglets')
+  T.eq(s.tabs[1].name, tabs[1].name)
+  -- aides : structure (userdata) lue champ par champ
+  local assists = h.ac.getAssists()
+  h.ac.getAssists = function() return proxyOf(assists, 1) end
+  local session = Datasource.readSession(h)
+  T.ok(session.assists ~= nil, 'aides lues')
+  T.eq(session.assists.fuelRate, assists.fuelRate)
+  T.eq(session.assists.abs, assists.abs)
+  -- menu d'arrêt : lu et relu en objet
+  local pit = h.ac.getPitstopSpinners
+  h.ac.getPitstopSpinners = function() return proxyOf(pit(), 0) end
+  local r, err = Exporter.applyPitStrategy(h, { PRESSURE_LF = 25, PRESSURE_RF = 25, PRESSURE_LR = 24, PRESSURE_RR = 24 })
+  T.ok(r ~= nil, tostring(err))
+  T.eq(#r.done, 4, 'pressions posées')
+  T.eq(r.done[1].checked, true, 'relues')
+end
+
+-- Séance recommencée (chrono d'AC plus lent qu'avant) : le tour qui vient de finir, déjà compté par l'enregistreur, est le
+-- premier de la nouvelle séance ; il reste « votre meilleur ».
+tests['TA02 séance recommencée : le premier tour reste votre meilleur tour d\'AC'] = function()
+  local h, app = ready({ session = 1 })
+  local R = require('src/recorder')
+  local U = require('src/ui')
+  local fam = app.discovery.family
+  app.recorder.laps.family = {}
+  local lap1 = { family = fam, bucket = 'sec', valid = true, acValid = true, time = 86.0, signature = 'x1' }
+  R.keepFamily(app.recorder.laps, lap1) -- fait par Recorder.update avant onLap
+  h.car.bestLapTimeMs = 86000
+  app.handleLap(lap1)
+  T.near(app.acBestSeen, 86.0, 1e-9)
+  local lap2 = { family = fam, bucket = 'sec', valid = true, acValid = true, time = 88.0, signature = 'x1' }
+  R.keepFamily(app.recorder.laps, lap2)
+  h.car.bestLapTimeMs = 88000
+  app.handleLap(lap2)
+  local stats = U.realLaps(app, fam, 'sec')
+  T.near(U.realTime(stats, 'quali'), 88.0, 1e-9, 'votre meilleur : le meilleur tour d\'AC de la séance recommencée')
+  T.eq(stats.sessionCount, 1, 'un tour dans la séance')
+  T.near(stats.sessionBest, 88.0, 1e-9)
+end
+
+-- Horloge de la séance revenue en arrière (séance recommencée) : le contexte reste relu, les échéances suivent.
+tests['TA03 horloge revenue en arrière : contexte relu, échéances décalées'] = function()
+  local h, app = ready({ session = 1 })
+  frames(h, 120)
+  h.sim.time = h.sim.time + 600000
+  frames(h, 120)
+  app.setupWatch = { family = 'f', since = app.now }
+  local before = app.context
+  h.sim.time = 1000
+  frames(h, 180)
+  T.ok(app.context ~= before, 'contexte relu (nextContextAt = ' .. tostring(app.nextContextAt) .. ', now = '
+    .. tostring(app.now) .. ')')
+  T.ok(app.nextContextAt <= app.now + 1.0 + 1e-9, 'prochaine relecture proche')
+  T.ok(app.setupWatch == nil or app.setupWatch.since <= app.now, 'setup surveillé : instant décalé')
+end
+
 return tests

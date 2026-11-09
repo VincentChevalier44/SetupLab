@@ -228,7 +228,19 @@ end
 
 -- Modèle français traduit puis rempli (string.format).
 function M.f(fmt, ...)
-  local out = string.format(M.t(fmt), ...)
+  local translated = M.t(fmt)
+  local out
+  if translated:find('{%d}') then
+    -- traduction qui change l'ordre (« {2} … {1} ») : chaque trou mis en forme selon le format français, puis placé
+    local args, caps, i = { ... }, {}, 0
+    for spec in fmt:gmatch('%%[%-%+ #0]*%d*%.?%d*[sdifgeExXq]') do
+      i = i + 1
+      caps[i] = string.format(spec, args[i])
+    end
+    out = fill(translated, caps)
+  else
+    out = string.format(translated, ...)
+  end
   if M.lang == 'en' and not outputs[out] then
     if outputsSize >= OUTPUTS_MAX then outputs, outputsSize = {}, 0 end
     outputs[out], outputsSize = true, outputsSize + 1

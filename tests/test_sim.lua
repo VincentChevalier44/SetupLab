@@ -312,7 +312,13 @@ tests['S08 sensibilités : sens physique des réglages'] = function()
   T.ok(shares[1] > 0.3 and shares[3] < 0.05, 'blocage arrière à 50 % (' .. shares[1] .. '), pas à 70 %')
   -- pression : optimum à la pression à froid qui donne la pression idéale à chaud
   local c = base.compounds[CarModel.defaultSetup(base).compound]
-  local ideal = CarModel.coldPressureFor(c.front.pressureIdeal, 25, CarModel.operatingTemp(c.front))
+  -- pression à froid qui donne l'idéale à chaud (inverse de CarModel.hotPressure, par dichotomie)
+  local temp, lo, hi = CarModel.operatingTemp(c.front), 5, 50
+  for _ = 1, 60 do
+    local mid = (lo + hi) / 2
+    if CarModel.hotPressure(mid, 25, temp) < c.front.pressureIdeal then lo = mid else hi = mid end
+  end
+  local ideal = (lo + hi) / 2
   local function withPressure(p)
     return r.lap(function(s) s.pressureF, s.pressureR = p, p end).time
   end

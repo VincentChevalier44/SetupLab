@@ -170,7 +170,14 @@ def main():
         # pas des jeux de données et des traces de toutes les suites précédentes).
         lua = runtime()
         load = lua.eval("function(path) local chunk = assert(loadfile(path)); return chunk() end")
-        protect = lua.eval("function(fn) local ok, err = xpcall(fn, debug.traceback); return ok, tostring(err) end")
+        # message d'erreur hors UTF-8 (octets aléatoires d'un test de fuzzing) : octets hauts remplacés, le banc continue
+        protect = lua.eval(r"""function(fn)
+          local ok, err = xpcall(fn, debug.traceback)
+          err = tostring(err)
+          local valid = err:gsub('[\194-\244][\128-\191]+', ''):find('[\128-\255]') == nil
+          if not valid then err = err:gsub('[\128-\255]', '?') end
+          return ok, err
+        end""")
         return load, protect
 
     for file in sorted(TESTS.glob('test_*.lua')):

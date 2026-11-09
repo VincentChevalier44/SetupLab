@@ -2,7 +2,7 @@
 
 # SetupLab — setup generator for Assetto Corsa
 
-**Version 1.0 — beta 1.5.9** (`1.0.0-beta.1.5.9`) · Lua app for Custom Shaders Patch (free version 0.2.11 or newer) · MIT licence
+**Version 1.0 — beta 1.5.10** (`1.0.0-beta.1.5.10`) · Lua app for Custom Shaders Patch (free version 0.2.11 or newer) · MIT licence
 
 SetupLab computes, for every car and track, a **qualifying** setup (practice, track day, hotlap, time attack, qualifying) and a **race** setup (full stint). It explains every setting, fits its model to your own laps, and refines the setup while you drive: it proposes a version, you try it in the pits in one click, keep or refuse each of its settings, and validate it.
 
@@ -124,6 +124,7 @@ python -I tests/run_tests.py              # linter and its self-tests, then ever
 python -I tests/run_tests.py --filter AU  # only the tests whose name contains "AU"
 python -I tests/run_tests.py --soak       # + endurance: 1,000 chained discoveries
 python -I tests/lint.py                   # linter only
+sh tests/calm_bench.sh [filter]           # wait for a calm machine, then run the bench (timing tests fail under load)
 python -I tests/package.py                # distribution archive dist/SetupLab-<version>.zip
 ```
 
@@ -135,11 +136,10 @@ The source texts are French; the English interface comes from a dictionary in `t
 
 ```
 python -I tests/tools/gen_lang.py         # regenerate src/lang_en.lua (the bench fails if it is out of date)
-sh tests/calm_bench.sh [filter]           # wait for a calm machine, then run the bench (timing tests fail under load)
-python -I tests/tools/extract_keys.py --missing   # French texts of the code with no translation yet
+python -I tests/tools/extract_keys.py --missing   # candidate keys with no entry (noisy: the J0 report stays French on purpose)
 ```
 
-`tests/test_i18n.lua` replays the main flows in English, with every tooltip and section open, and fails on any French text left.
+`tests/test_i18n.lua` replays the main flows in English, with every tooltip and section open, and fails on any French text left, whether it went through the dictionary or was drawn on screen directly.
 
 ### Rules enforced by the linter
 
@@ -182,6 +182,9 @@ src/dash.lua         "Racing 26" page layouts (header, tabs, every page, overlay
 fonts/               Barlow, Barlow Condensed, JetBrains Mono (SIL Open Font License 1.1, licence next to each family)
 docs/                user guide (English and French)
 tests/               offline bench, linter, dictionary, data set generator (never distributed)
+assets/              banner of the README and the releases
+update.txt           latest published version, read by the in-game update
+.github/             issue template
 ```
 
 ## Licence

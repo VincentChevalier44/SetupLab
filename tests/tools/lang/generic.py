@@ -13,7 +13,6 @@ EN = {
     'refusé': 'refused',
     'en piste': 'on track',
     'à charger au stand': 'to load in the pits',
-    'un clic pour garder ou refuser': 'one click to keep or refuse',
     'gain prévu %s s': 'predicted gain %s s',
     'gain prévu %s s par tour': 'predicted gain %s s per lap',
     'dont %s s sur des réglages à confirmer': 'of which %s s on settings to confirm',

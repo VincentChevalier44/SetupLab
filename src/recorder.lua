@@ -47,7 +47,8 @@
 -- Mémoire : un seul tampon de tour, réutilisé ; un tour terminé est copié une fois, sans les positions
 -- (sauf sans ligne IA). Seuls le dernier tour et le meilleur tour valide de chaque setup et état
 -- (K.recorderMaxSignatures au plus) sont conservés ; les setups de rec.protected (setup de la
--- découverte, setup proposé) ne sont jamais évincés.
+-- découverte, setup proposé) ne sont jamais évincés. Vos temps par famille : K.recorderMaxSignatures familles au plus, la
+-- moins récemment roulée évincée la première, jamais une famille de laps.protectedFamilies (famille de la découverte).
 
 local Util = require('src/util')
 local Config = require('src/config')
@@ -63,22 +64,7 @@ M.CHANNELS = { 'p', 'v', 'ax', 'ay', 'gas', 'brake', 'gear', 'rpm', 'fuel', 'ers
 M.KEPT = { 'p', 'v', 'ax', 'ay', 'gas', 'brake', 'gear', 'rpm', 'fuel', 'ers' }
 M.POSITIONS = { 'x', 'y', 'z' }
 
-local function num(object, key)
-  local v = get(object, key)
-  if type(v) == 'cdata' then v = tonumber(v) end
-  if Util.isFinite(v) then return v end
-  return nil
-end
-
-local function bool(object, key)
-  local v = get(object, key)
-  if type(v) == 'boolean' then return v end
-  if type(v) == 'number' or type(v) == 'cdata' then
-    local n = tonumber(v)
-    if Util.isFinite(n) then return n ~= 0 end
-  end
-  return nil
-end
+local num, bool = Util.num, Util.flag
 
 -- Distance (en progression) d'une position à la ligne, bouclage compris.
 local function toLine(p)
@@ -89,7 +75,8 @@ function M.new(capacity)
   local rec = {
     capacity = capacity or K.recorderCapacity, n = 0, buf = {}, state = 'attente',
     lastLapCount = nil, nextSampleAt = nil, lastP = nil, maxGap = 0, invalid = nil, pending = nil,
-    signatureStart = nil, sums = nil, laps = { last = nil, best = {}, order = {}, family = {}, familyOrder = {} }, finished = 0,
+    signatureStart = nil, sums = nil, laps = { last = nil, best = {}, order = {}, family = {}, familyOrder = {}, protectedFamilies = {} },
+    finished = 0,
     protected = {},
     lapTimeRef = nil, lapTimePeak = nil, peakArmed = false, startTime = nil, drsPairs = {}, drsPrev = nil, trafficTime = 0,
     window = { n = 0, v = {}, load = { {}, {}, {}, {} } },
@@ -114,6 +101,7 @@ local function startLap(rec, signature, lapCount, now, family)
   rec.signatureStart, rec.familyStart = signature, family
   rec.lapIndex = lapCount
   rec.startTime = now
+  rec.officialMid = nil -- temps officiel du tour précédent, relevé en plein tour (resolvePending)
   -- maximum du chrono d'AC : suivi à partir de la frame suivante (la valeur de la frame du passage peut
   -- encore être celle du tour précédent)
   rec.lapTimePeak, rec.peakArmed = nil, false
@@ -191,11 +179,27 @@ function M.keepFamily(laps, lap)
   if lap.family == nil then return end
   local fkey = M.bestKey(lap.family, lap.bucket)
   local f = laps.family[fkey]
+  local order = laps.familyOrder
+  -- famille roulée en dernier : en fin de liste (la moins récemment roulée est évincée la première)
+  for i = #order, 1, -1 do
+    if order[i] == fkey then table.remove(order, i) break end
+  end
+  order[#order + 1] = fkey
   if f == nil then
     f = { best = nil, count = 0, sum = 0, traffic = 0 }
     laps.family[fkey] = f
-    laps.familyOrder[#laps.familyOrder + 1] = fkey
-    if #laps.familyOrder > K.recorderMaxSignatures then laps.family[table.remove(laps.familyOrder, 1)] = nil end
+    -- éviction : jamais la famille de ce tour, ni une famille protégée (setup de départ des versions proposées)
+    local protected = laps.protectedFamilies or {}
+    local i = 1
+    while #order > K.recorderMaxSignatures and i < #order do
+      local old = order[i]
+      if protected[tostring(old):match('^(.-)#pluie$') or old] then
+        i = i + 1
+      else
+        table.remove(order, i)
+        laps.family[old] = nil
+      end
+    end
   end
   -- meilleur tour d'AC de la séance (09/11/2026, comme l'onglet d'informations du jeu) : tours propres et tours comptés par
   -- AC écartés de l'analyse ; remis à zéro à chaque nouvelle séance (M.newSession)
@@ -302,7 +306,10 @@ local function resolvePending(rec, car, now)
   local p = rec.pending
   local ms = num(car, 'previousLapTimeMs')
   local official = ms and ms > 0 and ms / 1000 or nil
-  if official then
+  -- temps officiel encore celui du tour précédent (relevé en plein tour : AC le publie en retard) : attendu jusqu'à
+  -- l'échéance ; à l'échéance, retenu s'il recoupe (deux tours au même millième)
+  local stale = ms ~= nil and ms == p.staleMs and now < p.deadline
+  if official and not stale then
     for _, reference in ipairs(p.references) do
       if abs(official - reference) <= K.recorderTimeTolerance then return finalize(rec, official, nil) end
     end
@@ -433,7 +440,7 @@ for reason in pairs(M.RACE_INCIDENTS) do M.QUALITY_REASONS[reason] = true end
 -- Vincent le même jour) : une autre voiture juste devant (aspiration, gêne) ou à côté
 -- fausse la mesure du tour, qui ne doit compter ni pour la calibration ni pour le minimum de tours propres. Distance le
 -- long de la ligne IA (progression), bouclage compris ; voitures déconnectées, inactives ou dans la voie des stands
--- ignorées. Une voiture proche à l'échantillon ajoute sa durée (1/K.recorderHz) au tour ; au-delà de K.trafficMaxTime
+-- ignorées. Une voiture proche à l'échantillon ajoute sa durée réelle au tour ; au-delà de K.trafficMaxTime
 -- cumulées, le tour est rejeté. Renvoie la raison, ou nil.
 local function traffic(rec, host, p, context)
   local length, count = context.trackLength, context.carsCount
@@ -456,7 +463,7 @@ local function traffic(rec, host, p, context)
       end
     end
   end
-  if near then rec.trafficTime = rec.trafficTime + 1 / K.recorderHz end
+  if near then rec.trafficTime = rec.trafficTime + (rec.sampleDt or 1 / K.recorderHz) end
   if rec.trafficTime >= K.trafficMaxTime then
     -- séance de course : le tour reste valide, marqué en trafic (analyse de la course seulement)
     if context.raceSession then
@@ -479,7 +486,7 @@ function M.update(rec, host, now, signatureFn, context)
   if lapCount == nil then return nil end
   local lapTimeMs = num(car, 'lapTimeMs')
   if lapTimeMs and rec.peakArmed then rec.lapTimePeak = max(rec.lapTimePeak or 0, lapTimeMs) end
-  local finished = nil
+  local finished, crossed = nil, false
   if rec.lastLapCount ~= nil and lapCount ~= rec.lastLapCount then
     local previous = rec.lastLapCount
     rec.lastLapCount = lapCount
@@ -495,9 +502,10 @@ function M.update(rec, host, now, signatureFn, context)
       if rec.lapTimeRef then references[#references + 1] = rec.lapTimeRef / 1000 end
       if rec.lapTimePeak then references[#references + 1] = rec.lapTimePeak / 1000 end
       if rec.startTime then references[#references + 1] = now - rec.startTime end
-      rec.pending = { lap = lap, references = references, deadline = now + K.recorderTimeWait }
+      rec.pending = { lap = lap, references = references, deadline = now + K.recorderTimeWait, staleMs = rec.officialMid }
     end
     startLap(rec, signature, lapCount, now, family)
+    crossed = true
   elseif rec.lastLapCount == nil then
     rec.lastLapCount = lapCount
   end
@@ -507,7 +515,11 @@ function M.update(rec, host, now, signatureFn, context)
   if rec.state ~= 'enregistrement' then return finished end
   -- tour invalidé par AC, voie des stands, voiture replacée : vus à chaque image, quelle que soit la première raison
   -- retenue (temps d'AC, 09/11/2026)
-  if bool(car, 'isLapValid') == false then rec.acInvalid = true end
+  -- image du passage de ligne : la validité d'AC peut encore être celle du tour qui s'achève (comme son chrono) ; une
+  -- invalidation réelle du nouveau tour reste vue dès l'image suivante (elle dure jusqu'à la fin du tour)
+  local lapValid = nil
+  if not crossed then lapValid = bool(car, 'isLapValid') end
+  if lapValid == false then rec.acInvalid = true end
   if bool(car, 'isInPitlane') == true then rec.acDisq = true end
   local resets = num(car, 'resetCounter')
   if resets then
@@ -522,14 +534,14 @@ function M.update(rec, host, now, signatureFn, context)
       -- (fin de course au temps, drapeau un peu avant le passage de ligne) ne rejette pas le tour qui s'achève
       rec.invalid = 'tour après l\'arrivée'
     elseif rec.raceIncident == nil then
-      if bool(car, 'isLapValid') == false then
+      if lapValid == false then
         rec.raceIncident = 'tour invalidé par AC'
       elseif (num(car, 'wheelsOutside') or 0) > K.maxWheelsOutside then
         rec.raceIncident = 'sortie de piste'
       end
     end
   elseif rec.invalid == nil then
-    if bool(car, 'isLapValid') == false then
+    if lapValid == false then
       rec.invalid = 'tour invalidé par AC'
     elseif bool(car, 'isInPitlane') == true then
       rec.invalid = 'passage par la voie des stands'
@@ -543,6 +555,9 @@ function M.update(rec, host, now, signatureFn, context)
   if rec.nextSampleAt and now < rec.nextSampleAt - 1e-4 then return finished end
   rec.nextSampleAt = (rec.nextSampleAt or now) + 1 / K.recorderHz
   if rec.nextSampleAt < now then rec.nextSampleAt = now end
+  -- durée réelle de l'échantillon (sous 30 images/s, chaque image en est un) : bornée (reprise après une pause)
+  rec.sampleDt = rec.lastSampleAt and min(max(now - rec.lastSampleAt, 0), K.recorderSampleDtMax) or 1 / K.recorderHz
+  rec.lastSampleAt = now
   -- incidents lus au rythme des échantillons (30 Hz) : assez pour un blocage de 0,3 s ; séance de course : un incident de
   -- pilotage marque le tour (le premier), une voiture replacée le rejette
   if rec.invalid == nil then
@@ -578,6 +593,7 @@ function M.update(rec, host, now, signatureFn, context)
   rec.lastP = p
   local i = rec.n + 1
   rec.n = i
+  if i == K.recorderMinSamples then rec.officialMid = num(car, 'previousLapTimeMs') end
   local b = rec.buf
   local acc, pos = get(car, 'acceleration'), get(car, 'position')
   b.p[i], b.v[i] = p, v

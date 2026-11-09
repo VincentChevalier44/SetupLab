@@ -89,6 +89,8 @@ function M.classify(name)
   -- Hauteur de caisse : le repère des LUT aéro de hauteur (LUT_GH) n'est pas vérifié contre la hauteur
   -- mesurée, et l'appui peut chuter de plusieurs secondes par centimètre près de la falaise
   -- (relecture J3, M6) : non optimisée avant la vérification en jeu (J5).
+  -- tige du troisième élément (ROD_LENGTH_HF/HR) : la hauteur de caisse de l'essieu, comme les tiges des roues (seule tige
+  -- avant de certaines monoplaces à troisième élément) ; groupée avec elles
   axle = wheelAxle(name, 'ROD_LENGTH') or name:match('^ROD_LENGTH_H([FR])$')
   if axle then
     return { kind = 'rod', key = 'rod' .. axle, axle = axle, factor = 1e-4, class = M.EXCLUDED,
@@ -184,7 +186,9 @@ M.physicalOf = physicalOf
 -- Construit l'espace. args : { setupIni (car.ini['setup.ini']), spinners (Datasource.readSetup), ratios
 -- (car.ratios), hiddenTabs (ensemble de noms d'onglets masqués, facultatif), tick? (rendu coopératif) }.
 function M.build(args)
-  local space = { vars = {}, skipped = {}, members = {}, byKey = {} }
+  -- fixed : réglages verrouillés ou masqués (D20), jamais modifiés, mais simulés à leur valeur montée (pas à la valeur
+  -- d'usine des fichiers de la voiture), par clé de variable
+  local space = { vars = {}, skipped = {}, members = {}, byKey = {}, fixed = {}, fixedByKey = {} }
   local setupIni = args.setupIni
   for count, sp in ipairs(args.spinners or {}) do
     if args.tick and count % 16 == 0 then args.tick() end
@@ -193,11 +197,13 @@ function M.build(args)
     local function skip(reason)
       space.skipped[#space.skipped + 1] = { name = sp.name, label = sp.label, reason = reason }
     end
+    local lockReason = nil
     if sp.readOnly == true or sp.visible == false then
-      skip('verrouillé ou masqué (D20)')
+      lockReason = 'verrouillé ou masqué (D20)'
     elseif section and args.hiddenTabs and args.hiddenTabs[Util.iniGet(setupIni, sp.name, 'TAB') or ''] then
-      skip('onglet masqué (D20)')
-    else
+      lockReason = 'onglet masqué (D20)'
+    end
+    do
       local step = sp.step and sp.step > 0 and sp.step or 1
       local member = {
         name = sp.name, label = sp.label, kind = rule.kind, factor = rule.factor,
@@ -218,7 +224,18 @@ function M.build(args)
           problem = 'fichier de rapports illisible ou incohérent'
         end
       end
-      if problem then
+      if lockReason then
+        skip(lockReason)
+        if problem == nil then
+          local fixed = space.fixedByKey[rule.key]
+          if fixed == nil then
+            fixed = { key = rule.key, kind = rule.kind, axle = rule.axle, index = rule.index, gear = rule.gear, members = {} }
+            space.fixedByKey[rule.key] = fixed
+            space.fixed[#space.fixed + 1] = fixed
+          end
+          fixed.members[#fixed.members + 1] = member
+        end
+      elseif problem then
         skip(problem)
       else
         local var = space.byKey[rule.key]
@@ -429,30 +446,40 @@ function M.physical(var, d)
   return count > 0 and sum / count or nil
 end
 
--- Écrit dans setup (format CarModel.defaultSetup) la valeur physique de chaque variable : écart
--- deltas[key] (0 si absent) pour les variables optimisées, cran actuel pour les autres.
+-- Écrit la valeur physique d'une variable dans setup (format CarModel.defaultSetup).
+local function write(setup, var, value)
+  local kind, axle = var.kind, var.axle
+  if kind == 'wing' then
+    setup.wingAngles[var.index] = value
+  elseif kind == 'pressure' or kind == 'camber' or kind == 'spring' or kind == 'heave' or kind == 'rod' or kind == 'arb'
+    or kind == 'bumpStop' or kind == 'packer' then
+    setup[kind .. axle] = value
+  elseif kind == 'damperSlow' or kind == 'damperFast' then
+    setup[(kind == 'damperSlow' and 'dampSlow' or 'dampFast') .. axle] = value
+  elseif kind == 'brakeBias' or kind == 'brakePower' or kind == 'diffPower' or kind == 'fuel' then
+    setup[kind] = value
+  elseif kind == 'limiter' then
+    setup.limiterPct = value
+  elseif kind == 'gear' then
+    setup.gears[var.gear] = value
+  elseif kind == 'final' then
+    setup.final = value
+  end
+end
+
+-- Écrit dans setup la valeur physique de chaque variable : écart deltas[key] (0 si absent) pour les variables optimisées,
+-- cran actuel pour les autres ; réglages verrouillés ou masqués à leur valeur montée (sauf si une variable de même clé,
+-- réglable, les couvre).
 function M.apply(space, setup, deltas)
+  for _, fixed in ipairs(space.fixed or {}) do
+    if space.byKey[fixed.key] == nil then
+      local value = M.physical(fixed, 0)
+      if value ~= nil then write(setup, fixed, value) end
+    end
+  end
   for _, var in ipairs(space.vars) do
     local value = M.physical(var, deltas and deltas[var.key] or 0)
-    if value ~= nil then
-      local kind, axle = var.kind, var.axle
-      if kind == 'wing' then
-        setup.wingAngles[var.index] = value
-      elseif kind == 'pressure' or kind == 'camber' or kind == 'spring' or kind == 'heave' or kind == 'rod' or kind == 'arb'
-        or kind == 'bumpStop' or kind == 'packer' then
-        setup[kind .. axle] = value
-      elseif kind == 'damperSlow' or kind == 'damperFast' then
-        setup[(kind == 'damperSlow' and 'dampSlow' or 'dampFast') .. axle] = value
-      elseif kind == 'brakeBias' or kind == 'brakePower' or kind == 'diffPower' or kind == 'fuel' then
-        setup[kind] = value
-      elseif kind == 'limiter' then
-        setup.limiterPct = value
-      elseif kind == 'gear' then
-        setup.gears[var.gear] = value
-      elseif kind == 'final' then
-        setup.final = value
-      end
-    end
+    if value ~= nil then write(setup, var, value) end
   end
   return setup
 end
@@ -462,7 +489,7 @@ end
 -- corriger la hauteur statique d'un autre setup (écrasement au repos).
 function M.attach(space, base)
   for _, axle in ipairs({ 'F', 'R' }) do
-    local var = space.byKey['rod' .. axle]
+    local var = space.byKey['rod' .. axle] or space.fixedByKey and space.fixedByKey['rod' .. axle]
     if var then base['rodRef' .. axle] = M.physical(var, 0) end
   end
   base.rideRef = M.apply(space, { wingAngles = {}, gears = {} }, {})

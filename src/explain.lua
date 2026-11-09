@@ -7,6 +7,8 @@
 local Util = require('src/util')
 local Config = require('src/config')
 local L = require('src/i18n')
+local Sim = require('src/laptime_sim')
+local LIMIT = Sim.LIMIT
 
 local M = {}
 
@@ -23,14 +25,14 @@ function M.trackStats(track, buf)
   for k = 1, n do
     local v = buf.v[k]
     local v2 = buf.v[k < n and k + 1 or 1]
-    local dt = 2 * ds / math.max(0.5, v + v2)
+    local dt = 2 * ds / math.max(Config.K.simMinSpeed, v + v2)
     total = total + dt
     local code = buf.limit[k]
-    if code == 1 then
+    if code == LIMIT.corner then
       if v >= M.FAST_CORNER then fast = fast + dt elseif v <= M.SLOW_CORNER then slow = slow + dt end
-    elseif code == 4 then
+    elseif code == LIMIT.power then
       power = power + dt
-    elseif code == 2 then
+    elseif code == LIMIT.brake then
       brake = brake + dt
     end
   end
@@ -46,8 +48,8 @@ function M.cornerBalance(track, buf)
   local n, ds = track.n, track.ds
   for k = 1, n do
     local v = buf.v[k]
-    if buf.limit[k] == 1 and (buf.balance[k] or 0) > 0 then
-      local dt = ds / math.max(0.5, v)
+    if buf.limit[k] == LIMIT.corner and (buf.balance[k] or 0) > 0 then
+      local dt = ds / math.max(Config.K.simMinSpeed, v)
       if current == nil then
         current = { s0 = track.s[k], sum = 0, time = 0, v = v }
         list[#list + 1] = current
@@ -108,8 +110,8 @@ end
 
 local function gainText(W, contribution)
   if contribution == nil then return '' end
-  if contribution >= 0.0005 then return W.gain:format(fmt(contribution, 2)) end
-  if contribution > -0.0005 then return W.negligible end
+  if contribution >= Config.K.lapTimeEps then return W.gain:format(fmt(contribution, 2)) end
+  if contribution > -Config.K.lapTimeEps then return W.negligible end
   return W.cost:format(fmt(-contribution, 2))
 end
 

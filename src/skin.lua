@@ -17,7 +17,7 @@ end
 
 -- Jetons du kit Racing 26 (clés historiques gardées : blue = cyan d'action, light = texte, grey = libellé…).
 M.COLORS = {
-  bg = hex('#0A0B0E', 0.98), panel = hex('#111318', 0.98), clear = { 0, 0, 0, 0 },
+  bg = hex('#0A0B0E', 0.98), panel = hex('#111318', 0.98),
   rowHover = hex('#1B1F26'), line = hex('#23272E'),
   raised = hex('#22262E'), raisedHover = hex('#2C313B'), outline = hex('#3A404C'),
   light = hex('#EEF0F3'), grey = hex('#8D94A0'),
@@ -25,6 +25,8 @@ M.COLORS = {
   select = hex('#06222D'),
   go = hex('#2EE07F'), goHover = hex('#5CEB9C'), goText = hex('#04170D'),
   danger = hex('#FF5A4E'), dangerHover = hex('#FF7A70'), dangerText = hex('#240604'),
+  -- boutons pressés et champ survolé (contrôles ImGui, repli sans le thème : src/ui.lua)
+  blueActive = hex('#12A8DE'), goActive = hex('#26BF6D'), dangerActive = hex('#E65146'), fieldHover = hex('#2A2F39'),
   switchOff = hex('#2A2E36'), knobOn = hex('#031820'), segmentOff = hex('#2A2E36'),
   -- pages Racing 26 (src/dash.lua) : contrôle, texte secondaire, filets, aplats de statut (kit de la maquette)
   control = hex('#1D2027'), controlHover = hex('#272B34'), soft = hex('#C9CDD3'), dim = hex('#5C626C'), tabIdle = hex('#9AA1AC'),
@@ -33,11 +35,11 @@ M.COLORS = {
   badInk = hex('#FFB4AD'), errBg = hex('#2A1412'), bar = hex('#15181D'), tile = hex('#17191E'), selLine = hex('#0E4258'),
   best = hex('#B26CFF'), fast = hex('#8C7BFF'), langBg = hex('#1B1E24'), langLine = hex('#343943'), pillGo = hex('#0E251C'),
   pillRec = hex('#310B11'), pillIdle = hex('#1B1D21'), rec = hex('#FF6B72'), stripe = hex('#118EB8'), keepBg = hex('#173E2A'),
-  overlayBg = hex('#090A0D', 0.88), logoDim = hex('#9A9A9A'), helpLast = hex('#0C1D25'), overlayBar = hex('#14171C', 0.97),
+  overlayBg = hex('#090A0D', 0.88), helpLast = hex('#0C1D25'), overlayBar = hex('#14171C', 0.97),
 }
 
 -- Tailles de texte (px).
-M.SIZE = { main = 13, small = 11, title = 22, button = 14, header = 26, tab = 14 }
+M.SIZE = { main = 13, small = 11, title = 22, button = 14 }
 M.BUTTON_PAD = 30
 M.CUT, M.SLANT, M.TAB_SLANT = 10, 9, 7
 

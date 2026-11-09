@@ -4,6 +4,7 @@
 
 local Util = require('src/util')
 local Config = require('src/config')
+local TrackModel = require('src/track_model')
 local K = Config.K
 
 local M = {}
@@ -20,7 +21,9 @@ M.STATUS_LABEL = {
   na = 'sans objet',
 }
 
--- Fonctions lues ou appelées par SetupLab (tableau de vérité §3.2).
+-- Fonctions lues ou appelées par SetupLab pour mesurer, calculer et charger (tableau de vérité §3.2). La mise à jour en jeu
+-- (src/updater.lua : web.get, io.scanZip, io.copyFile…) vérifie elle-même chacune des siennes : une absente, rien n'est
+-- remplacé (la mise à jour s'arrête et le dit) ; elle n'entre pas dans ce tableau.
 M.FUNCTIONS = {
   'ac.getPatchVersion', 'ac.getPatchVersionCode', 'ac.getSim', 'ac.getSession', 'ac.getCar', 'ac.getCarPhysics',
   'ac.getCarID', 'ac.getCarName', 'ac.getCarDataFiles', 'ac.INIConfig.carData', 'ac.INIConfig.trackData',
@@ -200,7 +203,7 @@ function M.probeStatic(host)
     r.neverCalled[#r.neverCalled + 1] = { path = path, present = M.isCallable(M.resolve(host, path), host.ffi) }
   end
   local okV, version = Util.call(M.resolve(host, 'ac.getPatchVersion'))
-  if okV and type(version) == 'string' then r.version = Util.truncate(version, 64) end
+  if okV and type(version) == 'string' then r.version = Util.truncate(version, Config.K.textMax.version) end
   local okN, code = Util.call(M.resolve(host, 'ac.getPatchVersionCode'))
   if okN and Util.isFinite(code) then r.versionCode = code end
   -- io.available absente (CSP 0.2.11, gratuite) : accès supposé, l'écriture relue fait foi (D17)
@@ -215,7 +218,7 @@ function M.probeStatic(host)
   for _, name in ipairs({ 'UserSetups', 'ContentCars', 'CurrentTrackLayoutUI' }) do
     local id = M.resolve(host, 'ac.FolderID.' .. name)
     local okF, value = Util.call(getFolder, id)
-    if id ~= nil and okF and type(value) == 'string' and value ~= '' then r.folders[name] = Util.truncate(value, 260) end
+    if id ~= nil and okF and type(value) == 'string' and value ~= '' then r.folders[name] = Util.truncate(value, Config.K.textMax.path) end
   end
   return r
 end
@@ -498,9 +501,11 @@ function M.evaluate(static, d)
       add('session', 'Données de session', M.AVAILABLE, 'type ' .. tostring(v.raceSessionType) .. ', tours '
         .. tostring(session.session.laps) .. ', durée ' .. tostring(session.session.durationMinutes) .. ' min')
       local temps = Util.isFinite(v.ambientTemperature) and Util.isFinite(v.roadTemperature)
+      -- grip lu en pour cent ou en fraction selon CSP : ramené comme pour le calcul (TrackModel.normalizeGrip)
+      local grip = TrackModel.normalizeGrip(v.roadGrip)
       add('conditions', 'Conditions de piste', temps and M.AVAILABLE or M.PENDING,
         'air ' .. Util.fmt(v.ambientTemperature, 1) .. ' °C, piste ' .. Util.fmt(v.roadTemperature, 1)
-        .. ' °C, grip ' .. Util.fmt(v.roadGrip and v.roadGrip * 100, 1) .. ' %'
+        .. ' °C, grip ' .. Util.fmt(grip and grip * 100, 1) .. ' %'
         .. (session.wet and ' ; piste mouillée : setups pluie (D16 amendé)' or ''))
     else
       add('session', 'Données de session', M.UNAVAILABLE, tostring(session.reason))

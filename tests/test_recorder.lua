@@ -33,7 +33,7 @@ end
 -- Fait rouler n tours (plus la fin du tour de départ) ; hook(i, h) appelé à chaque frame ; extra : champs ajoutés au
 -- contexte de l'enregistreur (trafic du mode en ligne).
 local function drive(env, laps, rec, hook, signatureFn, extra)
-  local h, dt, now = env.h, 1 / 60, 0
+  local h, dt, now = env.h, env.dt or 1 / 60, 0
   local finished = {}
   local context = { trackLength = env.track.length, conditions = { airTemp = 25, roadTemp = 32, roadGrip = 0.98 },
     keepPositions = env.keepPositions }
@@ -74,6 +74,7 @@ local function env(trackId)
   for w = 0, 3 do e.h.car.wheels[w].slipRatio, e.h.car.wheels[w].slipAngle = 0, 0 end
   -- autres voitures (trafic du mode en ligne) posées par un test : retirées
   rawset(e.h, 'others', nil)
+  e.dt = nil
   return e
 end
 
@@ -670,6 +671,78 @@ tests['RS02 séance de course : tour après l\'arrivée rejeté, tour du drapeau
   local laps3 = drive(e3, 1, Recorder.new())
   T.ok(laps3[1].valid, 'hors course : ' .. tostring(laps3[1].reason))
   rawset(e3.h.car, 'isRaceFinished', nil)
+end
+
+-- Validité d'AC au passage de ligne : l'image du passage peut encore montrer le tour qui s'achève invalidé ; le nouveau tour
+-- n'en hérite pas. Une invalidation qui dure (le nouveau tour vraiment invalidé) reste vue dès l'image suivante.
+tests['R12 validité d\'AC au passage de ligne : pas reportée sur le tour suivant'] = function()
+  local e = env('ks_red_bull_ring-layout_gp')
+  local rec = Recorder.new()
+  local last = 0
+  -- tour 2 invalidé en fin de tour ; AC remet la validité une image après le passage de ligne (tour 3 propre) ; tour 4
+  -- invalidé dès son départ (l'invalidation dure)
+  local laps = drive(e, 4, rec, function(_, h, r)
+    if h.car.lapCount ~= last then
+      last = h.car.lapCount
+      if last == 3 then h.car.isLapValid = true end
+    end
+    if last == 2 and r.state == 'enregistrement' and r.n == 2500 then h.car.isLapValid = false end
+    if last == 4 and r.state == 'enregistrement' then h.car.isLapValid = false end
+  end)
+  T.eq(#laps, 4)
+  T.ok(laps[1].valid, 'tour 1 : ' .. tostring(laps[1].reason))
+  T.eq(laps[2].reason, 'tour invalidé par AC')
+  T.eq(laps[2].acValid, nil, 'tour 2 non compté par AC')
+  T.ok(laps[3].valid, 'tour 3 : ' .. tostring(laps[3].reason))
+  T.eq(laps[3].acValid, true, 'tour 3 compté par AC')
+  T.eq(laps[4].reason, 'tour invalidé par AC', 'invalidation qui dure')
+  e.h.car.isLapValid = true
+end
+
+-- Vos temps par famille de setup : la famille la moins récemment roulée est évincée la première, jamais la famille de départ
+-- protégée ni celle qu'on roule.
+tests['R13 vos temps par famille : éviction de la moins récente, famille de départ protégée'] = function()
+  local laps = Recorder.new().laps
+  laps.protectedFamilies = { F0 = true }
+  local function lap(family, time) Recorder.keepFamily(laps, { family = family, bucket = 'sec', valid = true, acValid = true, time = time }) end
+  lap('F0', 90)
+  for i = 1, K.recorderMaxSignatures + 3 do lap('F' .. i, 90 + i) end
+  T.ok(laps.family.F0 ~= nil, 'famille de départ gardée')
+  T.eq(laps.family.F0.acBest, 90)
+  T.ok(laps.family['F' .. (K.recorderMaxSignatures + 3)] ~= nil, 'famille roulée gardée')
+  T.eq(#laps.familyOrder, K.recorderMaxSignatures)
+  local n = 0
+  for _ in pairs(laps.family) do n = n + 1 end
+  T.eq(n, K.recorderMaxSignatures, 'familles bornées')
+  -- une famille roulée à nouveau redevient la plus récente : la suivante évincée est une autre
+  local keepKey = laps.familyOrder[2]
+  lap(keepKey, 80)
+  lap('NEW', 99)
+  T.ok(laps.family[keepKey] ~= nil, 'famille roulée à nouveau gardée')
+  T.eq(laps.family[keepKey].acBest, 80)
+  -- piste mouillée : la famille de départ protégée aussi
+  Recorder.keepFamily(laps, { family = 'F0', bucket = 'pluie', valid = true, acValid = true, time = 100 })
+  for i = 1, K.recorderMaxSignatures + 1 do lap('W' .. i, 95) end
+  T.ok(laps.family['F0#pluie'] ~= nil, 'famille de départ sous la pluie gardée')
+end
+
+-- Trafic sous 30 images/s : chaque image est un échantillon, compté à sa durée réelle. 45 échantillons à 20 images/s :
+-- 2,25 s de gêne, au-delà du seuil de 2 s (compté 1/30 s chacun, 1,5 s seulement).
+tests['R14 trafic à 20 images/s : durée réelle de la gêne'] = function()
+  local e = env('monza')
+  e.dt = 1 / 20
+  local rec = Recorder.new()
+  local laps = drive(e, 1, rec, function(_, h, r)
+    local length = cache.monza.track.length
+    local on = r.state == 'enregistrement' and r.n >= 1000 and r.n < 1045
+    local q = (h.car.splinePosition + (on and 20 or 0.5 * length) / length) % 1
+    local other = rawget(h, 'others') and h.others[1]
+    if other == nil then h.others = { Fake.otherCar(q) } else other.splinePosition = q end
+  end, nil, { carsCount = 2 })
+  e.dt = nil
+  T.eq(#laps, 1)
+  T.no(laps[1].valid, 'gêne de 2,25 s')
+  T.eq(laps[1].reason, Recorder.TRAFFIC_REASON)
 end
 
 return tests

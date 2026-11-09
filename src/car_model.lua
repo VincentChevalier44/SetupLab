@@ -582,19 +582,17 @@ end
 local NO_CONDITIONS = {}
 local function noop() end
 
-local function airDensity(tempC)
+-- Masse volumique de l'air sec au niveau de la mer (kg/m³), à la température de l'air (°C).
+function M.airDensity(tempC)
   return 101325 / (287.05 * (Util.finiteOr(tempC, 20) + 273.15))
 end
+local airDensity = M.airDensity
 
 -- Pression à chaud (gaz parfait sur la pression absolue) : pneus gonflés à la température de l'air.
 function M.hotPressure(coldPsi, airTempC, tyreTempC)
   return (coldPsi + P_ATM_PSI) * (tyreTempC + 273.15) / (Util.finiteOr(airTempC, 20) + 273.15) - P_ATM_PSI
 end
 
--- Pression à froid donnant une pression à chaud visée.
-function M.coldPressureFor(hotPsi, airTempC, tyreTempC)
-  return (hotPsi + P_ATM_PSI) * (Util.finiteOr(airTempC, 20) + 273.15) / (tyreTempC + 273.15) - P_ATM_PSI
-end
 
 -- Température de fonctionnement retenue : milieu du plateau de la courbe de performance, ou défaut.
 function M.operatingTemp(tyre)
@@ -857,12 +855,20 @@ local function quarterCar(q, eff, share, spring, heave, bump, cSlow, cFast, heav
   return q
 end
 
--- Pression à chaud d'un essieu : mesurée (calibration), sinon déduite de la pression à froid à la
--- température mesurée de l'essieu (pressureTemp) ou à celle du pneu, plus l'écart mesuré à la loi des gaz.
-local function hotOf(conditions, tyre, cold, measured, temp, pressureTemp, offset)
+-- Pression à chaud d'un essieu (axle 'F' ou 'R') déduite de la pression à froid : loi des gaz à la température mesurée de
+-- l'essieu (pressureTempF/R), sinon à celle du pneu (tyreTempF/R, tyreTemp, température de fonctionnement), plus l'écart
+-- mesuré à la loi des gaz (pressureOffsetF/R). Seul calcul de la pression à chaud d'un setup : modèle et optimiseur (bande
+-- des crans, constat des pneus). Renvoie la pression, la température retenue.
+function M.axleHotPressure(conditions, tyre, cold, axle)
+  local temp = conditions['pressureTemp' .. axle] or conditions['tyreTemp' .. axle] or conditions.tyreTemp
+    or M.runningTemp(tyre, conditions)
+  return M.hotPressure(cold, conditions.airTemp, temp) + (conditions['pressureOffset' .. axle] or 0), temp
+end
+
+-- Pression à chaud d'un essieu : mesurée (calibration), sinon déduite de la pression à froid.
+local function hotOf(conditions, tyre, cold, measured, axle)
   if measured then return measured end
-  temp = pressureTemp or temp or conditions.tyreTemp or M.runningTemp(tyre, conditions)
-  return M.hotPressure(cold, conditions.airTemp, temp) + (offset or 0)
+  return (M.axleHotPressure(conditions, tyre, cold, axle))
 end
 
 -- Raideur radiale d'un pneu à sa pression de fonctionnement (PRESSURE_SPRING_GAIN par psi au-dessus de
@@ -1068,9 +1074,10 @@ local function lateralLimit(eff, n, lift, liftFront, guess)
   return ay, balance, FzF, FzR, dF, dR
 end
 
--- Décélération maximale de freinage (m/s²) avec transfert de charge et répartition imposée.
--- rearFirst : l'essieu arrière atteint sa limite d'adhérence avant l'avant (instabilité, §8.4) ;
--- non compté quand le couple de freinage limite seul.
+-- Décélération de freinage permise par l'adhérence (m/s²), avec transfert de charge et répartition imposée ; le couple
+-- maximal des freins (eff.brakeForceMax) borne à part, dans la simulation : l'ellipse d'adhérence réduit l'adhérence en
+-- virage, jamais le couple des freins (relecture du 09/11/2026). rearFirst : l'essieu arrière atteint sa limite
+-- d'adhérence avant l'avant (instabilité, §8.4) ; non compté quand le couple de freinage limite seul.
 local function brakeLimit(eff, FzF, FzR)
   local m, h, bias = eff.mass, eff.cgHeight, eff.brakeBias
   local decel, rearFirst = 0, false
@@ -1080,7 +1087,7 @@ local function brakeLimit(eff, FzF, FzR)
     local capR = axleLongitudinal(eff.tyreR, eff.dR * eff.longGripR, max(0, FzR - shift), eff.camberRadR)
     local byFront, byRear = capF / bias, capR / max(1e-6, 1 - bias)
     rearFirst = byRear < byFront and byRear < eff.brakeForceMax
-    decel = min(byFront, byRear, eff.brakeForceMax) / m
+    decel = min(byFront, byRear) / m
   end
   return decel, rearFirst
 end
@@ -1116,23 +1123,38 @@ local function gearForce(eff, g, v)
   return engineTorque(eff, min(rpm, eff.limiter)) * total * K.drivetrainEfficiency * eff.factors.power / eff.wheelRadius
 end
 
--- Vitesse de pointe : force motrice = traînée + roulement, par dichotomie dans le premier intervalle de la table où
--- l'accélération devient nulle (force et traînée interpolées dans la même table, relecture du 09/11/2026).
+-- Vitesse de pointe : la plus haute vitesse atteinte sur un rapport, min(vitesse au limiteur du rapport, vitesse où sa
+-- force motrice égale traînée + roulement). Croisement cherché par dichotomie sur la table continue du rapport (force et
+-- traînée interpolées dans le même intervalle) : jamais d'interpolation à travers la coupure du limiteur (relecture du
+-- 09/11/2026 : la pointe tombait jusqu'à un pas de table sous la vitesse au limiteur).
+local function netForce(f, drag, rr0, rr1, dv, i)
+  return f[i] - drag[i] - (rr0 + rr1 * ((i - 1) * dv) ^ 2)
+end
+
 local function topSpeedOf(eff, drag, rr0, rr1)
-  local dv, count, force = eff.dv, eff.speedCount, eff.force
-  for i = 2, count do
-    if force[i] - drag[i] - (rr0 + rr1 * ((i - 1) * dv) ^ 2) <= 0 then
-      local lo, hi = (i - 2) * dv, (i - 1) * dv
-      for _ = 1, 30 do
-        local v = 0.5 * (lo + hi)
-        local t = (v - (i - 2) * dv) / dv
-        local resist = drag[i - 1] + (drag[i] - drag[i - 1]) * t + rr0 + rr1 * v * v
-        if force[i - 1] + (force[i] - force[i - 1]) * t > resist then lo = v else hi = v end
+  local dv, count = eff.dv, eff.speedCount
+  local vEnd = (count - 1) * dv
+  local top = 0
+  for g = 1, eff.gearCount do
+    local f, vmax = eff.gearForce[g], min(eff.gearVmax[g], vEnd)
+    local reach = netForce(f, drag, rr0, rr1, dv, 1) > 0 and vmax or 0
+    for i = 2, reach > 0 and count or 1 do
+      if (i - 2) * dv >= vmax then break end
+      if netForce(f, drag, rr0, rr1, dv, i) <= 0 then
+        local lo, hi = (i - 2) * dv, (i - 1) * dv
+        for _ = 1, 30 do
+          local v = 0.5 * (lo + hi)
+          local t = (v - (i - 2) * dv) / dv
+          local resist = drag[i - 1] + (drag[i] - drag[i - 1]) * t + rr0 + rr1 * v * v
+          if f[i - 1] + (f[i] - f[i - 1]) * t > resist then lo = v else hi = v end
+        end
+        reach = min(vmax, lo)
+        break
       end
-      return lo
     end
+    if reach > top then top = reach end
   end
-  return (count - 1) * dv
+  return top
 end
 
 -- Réutilise (ou crée) un tableau de eff, ou une liste de rows tableaux.
@@ -1194,10 +1216,8 @@ function M.configure(base, setup, conditions, tick, reuse)
   local grip = roadGrip * Util.finiteOr(conditions.surfaceGrip, 1) * factors.mu
     * (1 + Util.finiteOr(conditions.driverMargin, 0))
   -- pression à chaud de chaque essieu : mesurée (calibration), sinon déduite de la pression à froid
-  local hotF = hotOf(conditions, compound.front, setup.pressureF, conditions.hotPressureF, conditions.tyreTempF,
-    conditions.pressureTempF, conditions.pressureOffsetF)
-  local hotR = hotOf(conditions, compound.rear, setup.pressureR, conditions.hotPressureR, conditions.tyreTempR,
-    conditions.pressureTempR, conditions.pressureOffsetR)
+  local hotF = hotOf(conditions, compound.front, setup.pressureF, conditions.hotPressureF, 'F')
+  local hotR = hotOf(conditions, compound.rear, setup.pressureR, conditions.hotPressureR, 'R')
   eff.hotF, eff.hotR = hotF, hotR
   -- piste mouillée (H25) : film d'eau, selon la classe du pneu ; l'aquaplanage dépend de la vitesse (plus bas)
   local wetness = Util.clamp(Util.finiteOr(conditions.wetness, 0), 0, 1)
@@ -1423,11 +1443,8 @@ function M.configure(base, setup, conditions, tick, reuse)
     local i = min(count, floor(K.brakeLockSpeed / dv) + 1)
     local FzF = eff.mass * G * eff.b / eff.wheelbase + max(0, liftFront[i])
     local FzR = eff.mass * G * eff.a / eff.wheelbase + max(0, lift[i] - liftFront[i])
-    local torqueLimit = eff.brakeForceMax
-    eff.brakeForceMax = math.huge
     local gripDecel = brakeLimit(eff, FzF, FzR)
-    eff.brakeForceMax = torqueLimit
-    eff.brakeLockRisk = max(0, torqueLimit / max(1, eff.mass * gripDecel) - 1 - K.brakeLockMargin)
+    eff.brakeLockRisk = max(0, eff.brakeForceMax / max(1, eff.mass * gripDecel) - 1 - K.brakeLockMargin)
   end
   eff.bottoming = min(eff.rideMinF, eff.rideMinR) < K.minDynamicRideHeight
   -- Hauteur minimale (MIN_HEIGHT, contrôlée par AC au repos) avec la marge K.minHeightMargin : un setup est

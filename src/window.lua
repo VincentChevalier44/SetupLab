@@ -25,11 +25,12 @@ function M.find(host, state)
   if state.wait > 0 then return nil end
   state.wait = M.RETRY_FRAMES
   local ac = host and host.ac
-  local okL, list = pcall(function() return ac.getAppWindows() end)
-  if not (okL and type(list) == 'table') then return nil end
+  local list = Util.listOf(pcall(function() return ac.getAppWindows() end))
+  if not list then return nil end
   for _, w in ipairs(list) do
-    if type(w) == 'table' and w.title == M.TITLE and type(w.name) == 'string' then
-      local okA, accessor = pcall(function() return ac.accessAppWindow(w.name) end)
+    local title, name = Util.get(w, 'title'), Util.get(w, 'name')
+    if title == M.TITLE and type(name) == 'string' then
+      local okA, accessor = pcall(function() return ac.accessAppWindow(name) end)
       local okV, valid = call(okA and accessor or nil, 'valid')
       if okV and valid then state.accessor = accessor end
       break

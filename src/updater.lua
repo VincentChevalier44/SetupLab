@@ -2,7 +2,7 @@
 -- version publiée (fichier update.txt de la branche main du dépôt GitHub) ; plus récente : un bouton « Mettre à jour ».
 -- Au clic seulement : téléchargement du zip de la release, taille et empreinte SHA-256 vérifiées, contenu du zip contrôlé
 -- (dossier SetupLab/ seulement, aucun chemin remontant, version du manifeste), extraction dans un dossier de travail hors
--- de l'app, copie de sauvegarde des fichiers actuels, puis remplacement de tous les fichiers dans la même image
+-- de l'app, copie de sauvegarde des fichiers actuels, puis remplacement des fichiers qui changent dans la même image
 -- (SetupLab.lua en dernier) : CSP recharge l'app une seule fois, sur des fichiers complets. Un échec avant le
 -- remplacement ne touche à rien ; pendant, les fichiers d'avant sont remis. Les fichiers de l'ancienne version absents de
 -- la nouvelle (liste files.txt de chaque archive) partent à la Corbeille. Aucune donnée n'est envoyée : une lecture, un

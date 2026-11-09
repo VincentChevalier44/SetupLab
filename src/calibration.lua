@@ -476,7 +476,7 @@ function M.estimate(lap, info, tick)
   local m = info.mass
   if not Util.isFinite(m) or m <= 0 then return nil, 'masse CSP inconnue' end
   local G = Util.G
-  local rho = 101325 / (287.05 * (Util.finiteOr(info.airTemp, 20) + 273.15))
+  local rho = CarModel.airDensity(info.airTemp)
   local track = info.track
   local x1, x2, y = {}, {}, {}
   local l1, l2, ly = {}, {}, {}

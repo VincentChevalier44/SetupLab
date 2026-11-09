@@ -220,6 +220,18 @@ tests['EN01 parcours complet en anglais (affinage, essai, tri, validation, overl
     end
   end
   T.eq(app.perf.errors, 0)
+  -- textes réellement affichés (dessinés sans passer par L.t compris) : aucun en français, aucun trou laissé
+  local bilingual = { ['FRANÇAIS'] = true, ['Français'] = true }
+  local seen, shown = {}, 0
+  for _, s in ipairs(h.shown) do
+    if type(s) == 'string' and not seen[s] and not bilingual[s] and not s:find('Langue', 1, true)
+        and (L.looksFrench(s) or s:find('{%d}') or s:find('%s', 1, true)) then
+      seen[s] = true
+      shown = shown + 1
+      PY.note('EN01 affiché ' .. shown, s)
+    end
+  end
+  T.eq(shown, 0, 'textes affichés en français')
   local n = report('EN01')
   L.misses, L.unmatched = nil, nil
   T.eq(n, 0, 'tout est traduit')
@@ -303,6 +315,18 @@ tests['EN03 coût de l\'interface en anglais pendant un calcul ; texte inconnu t
   PY.note('EN03 inconnu', string.format('%.3f ms par texte inconnu de %d caractères', ms, #unknown))
   T.ok(ms < 2, 'texte inconnu traduit en ' .. ms .. ' ms')
   T.eq(app.perf.errors, 0)
+end
+
+-- L.f avec une traduction qui change l'ordre des trous (« {1} ({2} lap{3}) ») : chaque trou à sa place, mis en forme selon
+-- le format français.
+tests['EN04 L.f : traduction réordonnée ({n}), trous mis en forme'] = function()
+  local before = L.lang
+  L.set('en')
+  T.eq(L.f('%s (%s tour%s)', 'v2', 3, 's'), 'v2 (3 laps)')
+  T.eq(L.f('%s (%s tour%s)%s', 'v2', 1, '', '.'), 'v2 (1 lap).')
+  L.set('fr')
+  T.eq(L.f('%s (%s tour%s)', 'v2', 3, 's'), 'v2 (3 tours)')
+  L.set(before)
 end
 
 return tests

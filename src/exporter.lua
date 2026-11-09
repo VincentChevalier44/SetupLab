@@ -1,6 +1,6 @@
 -- SetupLab — écriture des fichiers de setup (§12.3, D8, D17).
--- Seul module (avec store au J7) autorisé à écrire. Règles : un fichier écrit est toujours
--- nouveau (aucun écrasement), et tout fichier écrit est relu et comparé au contenu voulu. L'hôte est
+-- Seul module à écrire les fichiers de setup (le stockage : store ; la mise à jour en jeu : updater). Règles : un
+-- fichier écrit est toujours nouveau (aucun écrasement), et tout fichier écrit est relu et comparé au contenu voulu. L'hôte est
 -- injecté par la colle. D8 amendé le 22/10/2026 (décision de Vincent : « il ne reste que les fichiers V1,
 -- V2, V3, pas les intermédiaires » ; meilleur tour réel dans le nom) : seul ce module peut aussi mettre à la
 -- Corbeille ou renommer un fichier, et seulement un fichier écrit par SetupLab, intact (empreinte).
@@ -18,6 +18,7 @@ local K = Config.K
 local M = {}
 
 local get, call = Util.get, Util.call
+local TM = K.textMax
 
 -- Dossier cible : <setups>/<voiture>/<circuit sans disposition>/ (forme des dossiers existants).
 function M.targetFolder(host)
@@ -200,15 +201,15 @@ end
 -- est relu dans le menu. Renvoie { done = { name, kind, value, before, read, checked }, refused = { name, kind, value,
 -- error }, skipped = { name, kind, value }, seen = { 'NOM=type' } }, ou nil et la raison.
 function M.applyPitStrategy(host, values)
-  local okS, spinners = call(get(host.ac, 'getPitstopSpinners'))
-  if not (okS and type(spinners) == 'table') then return nil, 'menu d\'arrêt illisible' end
+  local spinners = Util.listOf(call(get(host.ac, 'getPitstopSpinners')))
+  if not spinners then return nil, 'menu d\'arrêt illisible' end
   local set = get(host.ac, 'setPitstopSpinnerValue')
   if set == nil then return nil, 'réglage du menu d\'arrêt indisponible dans cette version de CSP' end
   local result = { done = {}, refused = {}, skipped = {}, seen = {} }
-  for i = 1, math.min(#spinners, 32) do
+  for i = 1, math.min(#spinners, K.maxPitSpinners) do
     local sp = spinners[i]
     local name, kind = get(sp, 'name'), get(sp, 'type')
-    result.seen[#result.seen + 1] = Util.truncate(tostring(name), 32) .. '=' .. Util.truncate(tostring(kind), 16)
+    result.seen[#result.seen + 1] = Util.truncate(tostring(name), TM.short) .. '=' .. Util.truncate(tostring(kind), TM.flag)
     local wanted = nil
     if kind == 'pressure' and type(name) == 'string' then wanted = values[name] end
     if kind == 'compound' and type(name) == 'string' then wanted = values.TYRES end
@@ -224,7 +225,7 @@ function M.applyPitStrategy(host, values)
         if okP and accepted ~= false then
           result.done[#result.done + 1] = entry
         else
-          entry.error = (not okP) and Util.truncate(tostring(accepted), 120) or nil
+          entry.error = (not okP) and Util.truncate(tostring(accepted), TM.error) or nil
           result.refused[#result.refused + 1] = entry
         end
       end
@@ -232,10 +233,10 @@ function M.applyPitStrategy(host, values)
   end
   -- relecture : ce que le menu montre maintenant (preset sélectionné)
   if #result.done > 0 then
-    local okR, after = call(get(host.ac, 'getPitstopSpinners'))
-    if okR and type(after) == 'table' then
+    local after = Util.listOf(call(get(host.ac, 'getPitstopSpinners')))
+    if after then
       local read = {}
-      for i = 1, math.min(#after, 32) do
+      for i = 1, math.min(#after, K.maxPitSpinners) do
         local name = get(after[i], 'name')
         if type(name) == 'string' then read[name] = tonumber(get(after[i], 'value')) end
       end
@@ -254,7 +255,7 @@ function M.loadIntoCar(host, path, expected, written)
   local why = M.loadBlocker(host, path, expected, written)
   if why then return { ok = false, reason = why } end
   local okC, loaded = call(get(host.ac, 'loadSetup'), path)
-  if not okC then return { ok = false, called = true, reason = 'ac.loadSetup : ' .. Util.truncate(tostring(loaded), 200) } end
+  if not okC then return { ok = false, called = true, reason = 'ac.loadSetup : ' .. Util.truncate(tostring(loaded), TM.error) } end
   if loaded ~= true then return { ok = false, called = true, reason = 'ac.loadSetup a refusé le chargement' } end
   return { ok = true }
 end

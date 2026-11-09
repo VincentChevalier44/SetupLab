@@ -1,4 +1,5 @@
-# Bêta 1.5.9 (09/11/2026) : chargement sur la grille, temps d'AC, mémoire en temps réels, pneus de qualification.
+# Week-end de course : chargement sur la grille, temps d'AC (meilleur tour de la séance), mémoire en temps réels, pneus de
+# qualification (le plus tendre), CSP 0.2.11 (crans déduits de setup.ini).
 EN = {
     # chargement sur la grille avant le départ
     'sur la grille': 'on the grid',

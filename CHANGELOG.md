@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.0.0-beta.1.5.10 — 2026-11-09 — beta 1.5.10: full review, exact lap times, model checks
+
+Why this update: a second complete review of the code. A few lap times could still differ from AC's own timing, the saved data of some mod cars and tracks was lost at every launch, and some calculations were checked again and corrected. From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).
+
+Your lap times:
+
+- When AC publishes a lap time a few frames late, a lap no longer takes the previous lap's time (two laps within 0.1 s of each other could both get the first one). A lap timer reset late by AC no longer leaks into the next lap either.
+- A lap invalidated by AC just before the line no longer makes the next lap invalid.
+- After a session restart, the first lap is kept as your best of the new session.
+- When the session clock goes back (session restarted), track state, rain and session changes keep being read.
+- Your times per setup keep the starting setup of your versions and the setups you drove most recently (the first setup driven was dropped first, even when it was the starting setup).
+- Time spent in traffic is counted at its real length below 30 fps.
+- Lap times are rounded to the millisecond before being shown (an average could show "1:60.000").
+
+Saved data:
+
+- Cars and tracks whose folder name has spaces, accents, parentheses or "+" (some mods) now keep their calibration, track memory and race laps from one launch to the next (they were dropped when read back).
+
+Calculations (each one checked by a test):
+
+- Top speed: computed gear by gear, up to the rev limiter. It could come out up to 7 km/h below the limiter speed.
+- Braking in a corner: the grip ellipse reduces the tyre grip, not the brake torque. Braking was underestimated when the brakes, not the tyres, set the limit.
+- A setting locked by a series or on a hidden tab is now simulated at the value in the car, not at the car's default value.
+- One calculation of the hot tyre pressure for the model and the optimiser (same temperature everywhere); one air density.
+- The optimiser no longer stops with more than 36 settings to search, and the current setup no longer costs extra evaluations.
+
+CSP 0.2.11 ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)):
+
+- Every list read from CSP (setup tabs, pit-stop menu, setups folder, app windows) and the driving aids are accepted as objects as well as Lua tables, like the car files and setup settings in 1.5.9.
+- The track grip in the J0 report is shown in percent once, as used by the computation (a grip read in percent showed "9800 %").
+
+Interface:
+
+- Gains have the same sign everywhere (negative: faster), the table of settings included.
+- Step card titles use their colour again in the Racing 26 theme (warnings in orange).
+- Two texts were still in French in the English interface (version line of the DIAGNOSTICS tab, setup names of the MEASURE tab); the English bench now checks every text drawn on screen.
+- Translations that change the order of words are filled in the right order.
+
+Clean-up:
+
+- Unused code, settings and translations removed; shared functions for reading CSP values, the hot pressure and the setup file signatures; values moved to the configuration (text lengths, list sizes, tolerances); comments put back next to their functions.
+- Offline test bench: @TESTS@ tests, @MUT@ counter-checks.
+
 ## 1.0.0-beta.1.5.9 — 2026-11-09 — beta 1.5.9: load on the grid, AC's lap times, qualifying tyres, CSP 0.2.11 car data
 
 Why this update: in a race you could not load your race setup on the grid ("car not in the pits"); the times shown did not match AC's information tab, and the track memory showed a simulated time as your best; a qualifying setup could keep hard tyres; with the free CSP 0.2.11 some cars gave "Computation unavailable, car model incomplete" ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)). From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).
@@ -39,7 +82,7 @@ Review and clean-up:
 
 - Race computation: tyre compounds are now compared at the measured tyre temperature, as in qualifying (the race comparison used the curve plateau).
 - Car model: ballast was counted twice when the car mass came from CSP; the top speed uses the same force curve for its bracket and its bisection; one brake bias range for the file and the setup.
-- Setup steps: camber with SHOW_CLICKS=2 converted correctly; gear ratio lists read from the step minimum.
+- Setup steps: gear ratio lists read from the step minimum.
 - ERS: the optimised race plan is evaluated in steady state, like the car's own strategies; ERS profiles are read in a fixed order.
 - Optimiser: the robustness reserve is sized for the whole group, and the current setup no longer spends evaluations on a loss that is zero by definition. Unused gear-shift counting removed from the lap simulation (faster evaluations).
 - The "Performance / Stability" help text now matches the computation (towards 1: fastest; towards 0: more stable).

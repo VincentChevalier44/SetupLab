@@ -8,7 +8,7 @@ local M = {}
 M.appName = 'SetupLab'
 -- Première bêta publique (décision de Vincent du 22/10/2026 : « on la présentera comme la version bêta numéro
 -- un, v1.0 ») ; les versions 1.0.0 à 1.7.0 d'avant étaient internes (CHANGELOG.md).
-M.version = '1.0.0-beta.1.5.9'
+M.version = '1.0.0-beta.1.5.10'
 M.milestone = 'J0 à J8 (qualification, course, mesure, DRS, ERS, interface, persistance), chargement dans la voiture, affinage, pluie, '
   .. 'activation, mémoire du circuit, validation avant enregistrement, vos temps réels, vos retouches gardées'
 M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus récente est ignorée
@@ -127,7 +127,6 @@ M.settings = {
     label = 'Minutes de roulage avant une proposition (0 = sans)' },
   -- langue (décision de Vincent du 26/10/2026 : anglais par défaut, français au choix)
   { key = 'language', kind = 'enum', values = { 'en', 'fr' }, default = 'en', label = 'Langue' },
-  { key = 'debugLog', kind = 'boolean', default = false, label = 'Journal détaillé (DEBUG)' },
 }
 
 M.byKey = {}
@@ -249,6 +248,11 @@ M.K = {
   maxGearRatios = 16,
   maxWings = 16,
   maxReportChars = 120000,
+  maxSetupTabs = 32,          -- onglets du menu de setup lus au plus
+  maxPitSpinners = 32,        -- réglages du menu d'arrêt lus au plus
+  -- longueurs gardées des textes lus dans CSP ou dans les fichiers (données non fiables)
+  textMax = { error = Util.ERROR_MAX, name = 64, label = 96, units = 24, flag = 16, value = 128, path = 260,
+    version = 64, short = 32, status = 160 },
   exportMaxSuffix = 99,       -- suffixes -2…-99 essayés avant de renoncer (jamais d'écrasement)
   fileOpsMax = 64,            -- rangement des fichiers (Corbeille, meilleur tour dans le nom) : opérations en attente
   backupsMax = 64,            -- copies « Avant chargement » de la séance suivies (rangement à la validation)
@@ -455,6 +459,7 @@ M.K = {
 
   -- Enregistreur et calibration (§9)
   recorderHz = 30,            -- §9.1 : fréquence d'échantillonnage
+  recorderSampleDtMax = 0.15, -- durée d'un échantillon comptée au plus (s) : images lentes, reprise après une pause
   recorderCapacity = 40000,   -- §9.1 : échantillons au plus par tour
   recorderMinSamples = 100,   -- tour trop court en dessous
   recorderMaxGapM = 50,       -- trou de couverture au-delà duquel le tour est rejeté (m)
@@ -536,6 +541,8 @@ M.K = {
 
   -- Sondes J0
   setupValueTol = 1e-6,
+  refineViewsKept = 3,        -- versions de l'affinage dont le calcul est gardé pour l'affichage (pages Racing 26)
+  refineClockGapMax = 1.0,    -- s : écart d'horloge au-delà duquel le temps de roulage n'est pas compté (pause, saut)
   raycastHeight = 2.0,        -- départ du rayon au-dessus de la voiture (m)
   raycastLength = 10.0,       -- longueur du rayon (m)
 

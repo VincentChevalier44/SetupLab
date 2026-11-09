@@ -171,7 +171,10 @@ tests['F04 stockage : texte aléatoire relu sans erreur, champs conformes au sch
   for _ = 1, 3000 do
     local entries = Store.parse(text())
     for key, fields in pairs(entries) do
-      T.ok(key:match('^[%w_:%-%.]+$'), 'clé ' .. key)
+      local parts = {}
+      for part in key:gmatch('[^:]+') do parts[#parts + 1] = part end
+      local kind = table.remove(parts, 1)
+      T.ok(key == 'settings' or Store.entryKey(kind, unpack(parts)) == key, 'clé de la forme de Store.entryKey')
       for field, value in pairs(fields) do
         kept = kept + 1
         if field ~= 'stamp' then

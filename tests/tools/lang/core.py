@@ -36,7 +36,6 @@ EN = {
     "Pluie : niveaux d'aide en plus (antipatinage, ABS)": 'Rain: extra aid levels (traction control, ABS)',
     'Affinage : tours propres avant un nouveau calcul (0 = en continu)': 'Refinement: clean laps before a new computation (0 = continuous)',
     'Langue': 'Language',
-    'Journal détaillé (DEBUG)': 'Detailed log (DEBUG)',
     'Application active': 'App enabled',
     'Composé de pneus imposé au calcul, par son numéro dans la voiture (0 = le premier). -1 : SetupLab choisit lui-même le composé le plus rapide pour la température de piste mesurée.':
         'Tyre compound forced on the computation, by its number in the car (0 = the first). -1: SetupLab picks the fastest compound for the measured track temperature itself.',

@@ -8,7 +8,7 @@ local tests = {}
 tests['C01 schéma complet et défauts valides'] = function()
   local expected = { 'enabled', 'frameGuardMs', 'sliceBudgetMs', 'ds', 'optBudgetEvalsQ', 'optBudgetEvalsC',
     'fuelMarginPct', 'fuelQualiLaps', 'perfStab', 'wBal', 'wStab', 'wTraffic', 'wRob', 'drsTrafficPct',
-    'driverMarginPct', 'calibrationAuto', 'language', 'debugLog' }
+    'driverMarginPct', 'calibrationAuto', 'language' }
   for _, key in ipairs(expected) do T.ok(Config.byKey[key], 'réglage §15 présent : ' .. key) end
   local seen = {}
   for _, def in ipairs(Config.settings) do
@@ -37,7 +37,7 @@ end
 tests['C02 validation : types, non finis, bornes, entiers, énumérations'] = function()
   local v, fixes = Config.validate({
     enabled = 'oui', ds = 0 / 0, sliceBudgetMs = 100, perfStab = -2, optBudgetEvalsQ = 1234.6,
-    language = 'de', debugLog = true, wBal = math.huge, inconnu = 5,
+    language = 'de', wBal = math.huge, inconnu = 5,
   })
   T.eq(v.enabled, true, 'type invalide -> défaut')
   T.eq(v.ds, 2, 'NaN -> défaut')
@@ -45,7 +45,6 @@ tests['C02 validation : types, non finis, bornes, entiers, énumérations'] = fu
   T.eq(v.perfStab, 0, 'borné au minimum')
   T.eq(v.optBudgetEvalsQ, 1235, 'arrondi entier')
   T.eq(v.language, 'en', 'énumération : valeur inconnue -> défaut (anglais)')
-  T.eq(v.debugLog, true)
   T.eq(v.wBal, 1, 'infini -> défaut')
   T.eq(v.inconnu, nil, 'clé inconnue ignorée')
   T.ok(#fixes >= 6, 'corrections listées')

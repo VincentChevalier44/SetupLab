@@ -18,6 +18,10 @@ local K = Config.K
 -- contexte de l'image en cours (une seule fenêtre dessinée à la fois) et vec2 réutilisés (aucune allocation par image)
 local X = { host = nil, ui = nil, S = nil, c = nil, app = nil, intents = nil, U = nil, ox = 0, oy = 0, loadShown = {} }
 local V = nil
+-- Couleur d'un état de l'interface (noms de la palette de src/ui.lua : carte d'étape) -> jeton du thème (src/skin.lua).
+local STATUS_TOKEN = { available = 'go', pending = 'warn', unavailable = 'danger', na = 'grey', muted = 'grey', text = 'light',
+  accent = 'blue', best = 'best' }
+
 local function vec(i, x, y)
   local p = V[i]
   p.x, p.y = x, y
@@ -471,7 +475,6 @@ local function header(tabs, W, narrow)
   rect(0, y2 + th, W, y2 + th + 2, c.blue)
   return y2 + th + 2
 end
-M.header = header
 
 -- ---------------------------------------------------------------------------
 -- Ligne d'état et message
@@ -827,7 +830,7 @@ local function stepCard(model, kind, x, y, w, wide, dry)
     tip('Repartir d\'un autre setup : votre setup actuel, celui par défaut de la voiture, ou votre référence.')
     if not stepLabel then at(18) end
   end
-  textBox('display', tsize, up(titleText), x + pad, cy, lw, X.c[model.color] or c.light)
+  textBox('display', tsize, up(titleText), x + pad, cy, lw, X.c[STATUS_TOKEN[model.color] or ''] or c.light)
   at(th + 8)
   if model.step or model.done then
     at(stepBar(x + pad, cy, lw, model.step, model.done, true) + 8)
@@ -1115,7 +1118,8 @@ local function changesPanel(kind, e, r, x, y, w, dry)
     -- barre de gain et valeur
     local gx = px + pw - deltaW - toggleW
     local gain = row.gain or 0
-    local gs = Util.fmt(math.abs(gain), 3):gsub('^0', '')
+    -- signé comme partout (négatif : plus rapide), sans le zéro de tête (colonne étroite)
+    local gs = (gain >= 0 and '-' or '+') .. Util.fmt(math.abs(gain), 3):gsub('^0', '')
     local gw = measure('mono', 11, gs)
     local barW = math.max(2, (deltaW - gw - 8) * math.abs(gain) / maxGain)
     local gc = (not row.keep) and c.dim or (row.pending and c.warn or (gain >= 0 and c.go or c.danger))
@@ -1702,7 +1706,6 @@ local function kindPage(kind, x, y, w)
   cy = cy + toolsPanel(kind, x, cy, w) + 8
   return cy - y
 end
-M.kindPage = kindPage
 
 
 -- ---------------------------------------------------------------------------
@@ -2076,7 +2079,6 @@ local function racePage(x, y, w)
   cy = cy + toolsPanel('race', x, cy, w) + 8
   return cy - y
 end
-M.racePage = racePage
 
 
 -- ---------------------------------------------------------------------------
@@ -2361,7 +2363,7 @@ local function measurePage(x, y, w)
   for signature, known in pairs(app.knownSetups or {}) do
     for _, state in ipairs({ 'sec', 'pluie' }) do
       local best = rec and rec.laps.best[state == 'pluie' and (tostring(signature) .. '#pluie') or signature]
-      if best then list[#list + 1] = { label = tostring(known.label), wet = state == 'pluie', time = best.time,
+      if best then list[#list + 1] = { label = L.t(tostring(known.label)), wet = state == 'pluie', time = best.time,
         predicted = state == 'sec' and known.predicted or nil } end
     end
   end
@@ -2677,7 +2679,7 @@ local function diagPage(x, y, w)
   local theme = L.t('Thème de l\'interface : ' .. tostring(X.U.skinStatus or 'non évalué')
     .. (X.S.fontDir and ' ; polices de l\'app' or ' ; polices absentes : Segoe UI'))
   cy = cy + textBox('text', 11.5, theme, x, cy, w, c.grey) + 4
-  cy = cy + textBox('mono', 10.5, Config.appName .. ' ' .. Config.version .. ' — ' .. L.t('jalon') .. ' ' .. Config.milestone, x, cy,
+  cy = cy + textBox('mono', 10.5, Config.appName .. ' ' .. Config.version .. ' — ' .. L.t('jalon') .. ' ' .. L.t(Config.milestone), x, cy,
     w, c.grey) + 8
   return cy - y
 end
@@ -2865,12 +2867,12 @@ local function overlayInfo(app, U)
   info.tBefore, info.tMine = U.realTime(before, kind), U.realTime(mine, kind)
   local gain = (info.tMine and info.tBefore) and (info.tBefore - info.tMine) or nil
   info.gain = gain
-  info.edge = gain and (gain > 0.0005 and c.go or (gain < -0.0005 and c.danger or c.dim)) or c.blue
+  info.edge = gain and (gain > K.lapTimeEps and c.go or (gain < -K.lapTimeEps and c.danger or c.dim)) or c.blue
   info.state, info.stateColor = L.f('%s en piste', info.name), c.blueSoft
   info.where = L.t(kind == 'race' and 'Course' or 'Qualif') .. ' · ' .. L.t(e.bucket == 'pluie' and 'pluie' or 'sec')
   -- résumé de la barre réduite : l'écart sur vos tours, sinon le dernier tour
-  if gain and math.abs(gain) >= 0.0005 then
-    info.summary = (gain > 0 and '-' or '+') .. Util.fmt(math.abs(gain), 3) .. ' s'
+  if gain and math.abs(gain) >= K.lapTimeEps then
+    info.summary = X.U.gainText(gain)
     info.summaryColor = gain > 0 and c.go or c.danger
   else
     local last = app.recorder and app.recorder.laps and app.recorder.laps.last
@@ -3012,7 +3014,7 @@ local function overlayBody(app, U, info, W, top, H)
     text('mono', 11, bs, W - 14 - measure('mono', 11, bs), cy + 22, c.grey)
   end
   local verdictW = W - 28 - rightW - 10
-  if gain and math.abs(gain) >= 0.0005 then
+  if gain and math.abs(gain) >= K.lapTimeEps then
     local s = up(L.t(gain > 0 and 'Mieux de' or 'Moins bien de')) .. ' ' .. Util.fmt(math.abs(gain), 3) .. ' s'
     text('display', W < 360 and 20 or 26, fitted('display', W < 360 and 20 or 26, s, verdictW), px, cy, gain > 0 and c.go or c.danger)
   elseif gain then

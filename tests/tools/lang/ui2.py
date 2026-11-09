@@ -72,7 +72,6 @@ EN = {
     'Tour valide.': 'Valid lap.',
     'valide': 'valid',
     'Rejeté : %s': 'Rejected: %s',
-    'Meilleur (setup actuel)': 'Best (current setup)',
     'Tours enregistrés': 'Recorded laps',
     'Calibration': 'Calibration',
     ' (sera rejeté : %s)': ' (will be rejected: %s)',
@@ -161,7 +160,6 @@ EN = {
     'terminé': 'finished',
     'annulé': 'cancelled',
     'Données : %s ; modèle %s ; tour rapide %s, course %s': 'Data: %s; model %s; qualifying %s, race %s',
-    'Étape 1/4 · Rouler': 'Step 1/4 · Drive',
     'Cochez « SetupLab actif » puis roulez : SetupLab propose un setup dès le minimum de tours atteint (onglet Réglages).':
         'Tick "SetupLab active" then drive: SetupLab proposes a setup once the minimum laps are reached (SETTINGS tab).',
     'Course · avant le calcul': 'Race · before the computation',
@@ -178,13 +176,11 @@ EN = {
     "Au stand, bouton vert « Charger », puis roulez : l'affinage repart d'elle (étape 1).":
         'In the pits, green "Load" button, then drive: the refinement continues from it (step 1).',
     'COURSE': 'RACE',
-    'Étape 3/4 · Trier les effets de %s': 'Step 3/4 · Sort the effects of %s',
     'Gardez ou refusez chaque effet, puis validez.': 'Keep or refuse each effect, then validate.',
     'Étape 3/4 · Rouler avec %s': 'Step 3/4 · Drive with %s',
     'Roulez au moins un tour propre, puis triez ses effets au stand.': 'Drive at least one clean lap, then sort its effects in the pits.',
     'Étape 1/4 · v%s en préparation': 'Step 1/4 · v%s in preparation',
     "SetupLab continue d'analyser vos tours ; elle sera prête à votre retour au stand.": 'SetupLab keeps analysing your laps; it will be ready when you return to the pits.',
-    'Étape 2/4 · Essayer %s': 'Step 2/4 · Try %s',
     "Gain prévu %s s. « Essayer » la met dans la voiture, au stand, en un clic.": 'Predicted gain %s s. "Try" puts it in the car, in the pits, in one click.',
     'Étape 4/4 · Charger v%s': 'Step 4/4 · Load v%s',
     "Version validée : au stand, bouton vert « Charger », puis roulez pour la suite de l'affinage.":

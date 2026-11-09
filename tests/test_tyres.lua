@@ -356,4 +356,27 @@ tests['W06 gauche / droite (D11) : roue aberrante sans ancrage ; surchauffe sur 
   end
 end
 
+-- Un seul calcul de la pression à chaud d'un essieu (CarModel.axleHotPressure) : le modèle (configure) et la bande des
+-- crans de l'optimiseur la lisent à la même température, mesurée de l'essieu d'abord, puis du pneu.
+tests['W04 pression à chaud d\'un essieu : un seul calcul, même température pour le modèle et l\'optimiseur'] = function()
+  local w = world('lamborghini_huracan_gt3_evo2', 'monza')
+  local s = CarModel.defaultSetup(w.base)
+  local tyre = w.base.compounds[s.compound].front
+  local cold = s.pressureF
+  local c = { airTemp = 22, roadTemp = 30, tyreTempF = 95 }
+  local hot, temp = CarModel.axleHotPressure(c, tyre, cold, 'F')
+  T.eq(temp, 95, 'température du pneu de l\'essieu')
+  T.near(hot, CarModel.hotPressure(cold, 22, 95), 1e-9)
+  c.pressureTempF, c.pressureOffsetF = 88, 0.7
+  hot, temp = CarModel.axleHotPressure(c, tyre, cold, 'F')
+  T.eq(temp, 88, 'température mesurée de l\'essieu d\'abord')
+  T.near(hot, CarModel.hotPressure(cold, 22, 88) + 0.7, 1e-9, 'écart à la loi des gaz compris')
+  local eff = assert(CarModel.configure(w.base, s, c))
+  T.near(eff.hotF, hot, 1e-9, 'modèle')
+  local none = { airTemp = 22, roadTemp = 30 }
+  local _, running = CarModel.axleHotPressure(none, tyre, cold, 'F')
+  T.near(running, CarModel.runningTemp(tyre, none), 1e-9, 'sans mesure : température de fonctionnement')
+  T.near(CarModel.airDensity(15), 1.225, 0.001, 'air à 15 °C')
+end
+
 return tests

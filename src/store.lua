@@ -26,7 +26,7 @@ M.KEY = 'setuplab:data'
 local function factor(key) return { 'number', K.calibBounds[key][1], K.calibBounds[key][2] } end
 local STAMP = { 'number', 0, 1e11 }
 local ROUGH = { 'number', 0, K.roughMaxG0 }
-local HASH = { 'number', 0, 2147483647 }
+local HASH = { 'number', 0, Util.HASH_MOD }
 local FLAG = { 'boolean' }
 M.SCHEMAS = {
   cal = {
@@ -67,6 +67,20 @@ function M.entryKey(kind, ...)
     parts[#parts + 1] = text
   end
   return table.concat(parts, ':')
+end
+
+-- Clé relue valide : celle que M.entryKey forme (genre, puis identifiants sûrs ou entiers séparés par « : »).
+local function validKey(key)
+  local first = true
+  for part in (key .. ':'):gmatch('([^:]*):') do
+    if first then
+      if not part:match('^[%a_]+$') then return false end
+      first = false
+    elseif not (Util.isSafeId(part) or part:match('^%-?%d+$')) then
+      return false
+    end
+  end
+  return true
 end
 
 local function kindOf(key)
@@ -149,8 +163,9 @@ function M.parse(text)
   for line in text:gmatch('[^|]+') do
     count = count + 1
     if count > 1 then
-      local key, field, value = line:match('^([%w_:%-%.]+)#([%w_]+)=([^%c]*)$')
-      local kind = key and kindOf(key)
+      -- clé : identifiants sûrs (Util.isSafeId : dossiers de mods avec espaces, accents, parenthèses… jamais « # | = »)
+      local key, field, value = line:match('^([^#|=%c]+)#([%w_]+)=([^%c]*)$')
+      local kind = key and validKey(key) and kindOf(key)
       -- pas de « a and b or nil » : false est une valeur valide
       local valid = nil
       if kind then valid = validField(kind, field, decode(value)) end
