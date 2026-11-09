@@ -158,6 +158,17 @@ tests['R02 tours rejetés avec leur raison'] = function()
   end)
   T.contains(lapsA[1].reason, 'choc')
   T.eq(lapsA[1].acValid, nil, "invalidé par AC plus loin : pas un temps d'AC")
+  -- choc, puis la voie des stands : pas un temps d'AC non plus (la première raison reste le choc)
+  local eB = env('monza')
+  local recB = Recorder.new()
+  local lapsB = drive(eB, 1, recB, function(_, h, rec)
+    h.car.damage = rawget(h.car, 'damage') or { [0] = 0, 0, 0, 0, 0 }
+    if rec.state == 'enregistrement' and rec.n == 1500 then h.car.damage[0] = h.car.damage[0] + 25 end
+    if rec.state == 'enregistrement' and rec.n == 2500 then h.car.isInPitlane = true end
+    if rec.state == 'enregistrement' and rec.n == 2510 then h.car.isInPitlane = false end
+  end)
+  T.contains(lapsB[1].reason, 'choc')
+  T.eq(lapsB[1].acValid, nil, "voie des stands plus loin : pas un temps d'AC")
   -- téléportation : trou de couverture
   local e = env('monza')
   e.profile.jumpAt, e.profile.jump = 0.5, 0.1

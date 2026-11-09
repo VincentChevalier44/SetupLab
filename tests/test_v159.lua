@@ -345,4 +345,21 @@ tests['IS02 CSP 0.2.11 : INI vides, liste et crans illisibles : texte brut et se
   T.eq(app.perf.errors, 0)
 end
 
+-- Issue n° 2 : une liste de CSP sous forme d'objet indexable (userdata, cdata), depuis l'indice 0 : copiée entière.
+tests['IS03 CSP : crans renvoyés en objet indexable (base 0) : tous lus'] = function()
+  local Datasource = require('src/datasource')
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  local real = h.spinners
+  local proxy = newproxy(true)
+  local mt = getmetatable(proxy)
+  mt.__index = function(_, i) return type(i) == 'number' and real[i + 1] or nil end
+  mt.__len = function() return #real end
+  h.ac.getSetupSpinners = function() return proxy end
+  local spinners = Datasource.readSpinners(h)
+  T.eq(type(proxy), 'userdata')
+  T.eq(#spinners, #real, 'tous les crans')
+  T.eq(spinners[1].name, real[1].name, 'le premier (indice 0) compris')
+  T.eq(spinners[#spinners].name, real[#real].name, 'le dernier compris')
+end
+
 return tests
