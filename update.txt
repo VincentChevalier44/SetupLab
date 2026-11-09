@@ -1,5 +1,5 @@
-version=1.0.0-beta.1.5.8
-url=https://github.com/VincentChevalier44/ACSetupLab/releases/download/v1.0.0-beta.1.5.8/SetupLab-1.0.0-beta.1.5.8.zip
-download=https://github.com/VincentChevalier44/SetupLab/releases/download/v1.0.0-beta.1.5.8/SetupLab-1.0.0-beta.1.5.8.zip
-sha256=7b9a4cb6413e041c8437b43cbebe0969b45111f1a33e8ed8a4e0f0820e2877c0
-size=1044518
+version=1.0.0-beta.1.5.9
+url=https://github.com/VincentChevalier44/ACSetupLab/releases/download/v1.0.0-beta.1.5.9/SetupLab-1.0.0-beta.1.5.9.zip
+download=https://github.com/VincentChevalier44/SetupLab/releases/download/v1.0.0-beta.1.5.9/SetupLab-1.0.0-beta.1.5.9.zip
+sha256=08315bd419c5716e09239f992e91bf9e559ce02f02032376a68034663a8fcfc8
+size=1057700
