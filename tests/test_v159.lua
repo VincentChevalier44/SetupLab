@@ -433,6 +433,28 @@ tests['TA02 séance recommencée : le premier tour reste votre meilleur tour d\'
   T.near(stats.sessionBest, 88.0, 1e-9)
 end
 
+-- Séance recommencée, chrono d'AC à zéro (AC n'a compté aucun tour) : le tour qui vient de finir compte pour vos tours
+-- propres de la nouvelle séance, pas comme meilleur tour d'AC.
+tests['TA04 séance recommencée, chrono d\'AC à zéro : aucun meilleur tour d\'AC, tour propre gardé'] = function()
+  local h, app = ready({ session = 1 })
+  local R = require('src/recorder')
+  local U = require('src/ui')
+  local fam = app.discovery.family
+  app.recorder.laps.family = {}
+  local lap1 = { family = fam, bucket = 'sec', valid = true, acValid = true, time = 86.0, signature = 'x1' }
+  R.keepFamily(app.recorder.laps, lap1)
+  h.car.bestLapTimeMs = 86000
+  app.handleLap(lap1)
+  local lap2 = { family = fam, bucket = 'sec', valid = true, acValid = true, time = 88.0, signature = 'x1' }
+  R.keepFamily(app.recorder.laps, lap2)
+  h.car.bestLapTimeMs = 0
+  app.handleLap(lap2)
+  local stats = U.realLaps(app, fam, 'sec')
+  T.eq(stats.acBest, nil, 'aucun meilleur tour d\'AC dans la nouvelle séance')
+  T.eq(stats.sessionCount, 1)
+  T.near(stats.sessionBest, 88.0, 1e-9)
+end
+
 -- Horloge de la séance revenue en arrière (séance recommencée) : le contexte reste relu, les échéances suivent.
 tests['TA03 horloge revenue en arrière : contexte relu, échéances décalées'] = function()
   local h, app = ready({ session = 1 })

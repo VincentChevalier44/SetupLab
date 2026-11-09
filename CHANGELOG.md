@@ -6,7 +6,7 @@ Why this update: a second complete review of the code. A few lap times could sti
 
 Your lap times:
 
-- When AC publishes a lap time a few frames late, a lap no longer takes the previous lap's time (two laps within 0.1 s of each other could both get the first one). A lap timer reset late by AC no longer leaks into the next lap either.
+- When AC publishes a lap time a few frames late, a lap no longer takes the previous lap's time (two laps within 0.1 s of each other could both get the first one), also when AC resets its lap timer late as well.
 - A lap invalidated by AC just before the line no longer makes the next lap invalid.
 - After a session restart, the first lap is kept as your best of the new session.
 - When the session clock goes back (session restarted), track state, rain and session changes keep being read.
@@ -16,32 +16,32 @@ Your lap times:
 
 Saved data:
 
-- Cars and tracks whose folder name has spaces, accents, parentheses or "+" (some mods) now keep their calibration, track memory and race laps from one launch to the next (they were dropped when read back).
+- Cars and tracks whose folder name has spaces, accents, parentheses or "+" (some mods) now keep their calibration, track memory and race laps from one launch to the next (they were dropped when read back). Saved entries are read back only in the form SetupLab writes them.
+- Calibrations saved by an earlier version are not reused (the model changed: top speed, locked settings); your next clean laps calibrate it again.
 
 Calculations (each one checked by a test):
 
 - Top speed: computed gear by gear, up to the rev limiter. It could come out up to 7 km/h below the limiter speed.
-- Braking in a corner: the grip ellipse reduces the tyre grip, not the brake torque. Braking was underestimated when the brakes, not the tyres, set the limit.
 - A setting locked by a series or on a hidden tab is now simulated at the value in the car, not at the car's default value.
 - One calculation of the hot tyre pressure for the model and the optimiser (same temperature everywhere); one air density.
 - The optimiser no longer stops with more than 36 settings to search, and the current setup no longer costs extra evaluations.
 
 CSP 0.2.11 ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)):
 
-- Every list read from CSP (setup tabs, pit-stop menu, setups folder, app windows) and the driving aids are accepted as objects as well as Lua tables, like the car files and setup settings in 1.5.9.
+- Every list read from CSP (setup tabs, pit-stop menu, setups folder, app windows) and the driving aids are accepted as objects as well as Lua tables, like the car files and setup settings in 1.5.9 (setup tabs, pit-stop menu and driving aids checked on the bench).
 - The track grip in the J0 report is shown in percent once, as used by the computation (a grip read in percent showed "9800 %").
 
 Interface:
 
 - Gains have the same sign everywhere (negative: faster), the table of settings included.
-- Step card titles use their colour again in the Racing 26 theme (warnings in orange).
+- Step card titles show warnings in amber (to do) and red (refused) again in the Racing 26 theme; the others stay white.
 - Two texts were still in French in the English interface (version line of the DIAGNOSTICS tab, setup names of the MEASURE tab); the English bench now checks every text drawn on screen.
 - Translations that change the order of words are filled in the right order.
 
 Clean-up:
 
 - Unused code, settings and translations removed; shared functions for reading CSP values, the hot pressure and the setup file signatures; values moved to the configuration (text lengths, list sizes, tolerances); comments put back next to their functions.
-- Offline test bench: @TESTS@ tests, @MUT@ counter-checks.
+- Offline test bench: 450 tests, 53 counter-checks (each fix undone in turn must fail a test).
 
 ## 1.0.0-beta.1.5.9 — 2026-11-09 — beta 1.5.9: load on the grid, AC's lap times, qualifying tyres, CSP 0.2.11 car data
 

@@ -18,9 +18,9 @@ local K = Config.K
 -- contexte de l'image en cours (une seule fenêtre dessinée à la fois) et vec2 réutilisés (aucune allocation par image)
 local X = { host = nil, ui = nil, S = nil, c = nil, app = nil, intents = nil, U = nil, ox = 0, oy = 0, loadShown = {} }
 local V = nil
--- Couleur d'un état de l'interface (noms de la palette de src/ui.lua : carte d'étape) -> jeton du thème (src/skin.lua).
-local STATUS_TOKEN = { available = 'go', pending = 'warn', unavailable = 'danger', na = 'grey', muted = 'grey', text = 'light',
-  accent = 'blue', best = 'best' }
+-- Titre d'une carte d'étape : blanc (maquette Racing 26), sauf les mises en garde (palette de src/ui.lua -> jeton du thème,
+-- src/skin.lua) : à faire en ambre, refus en rouge.
+local STATUS_TOKEN = { pending = 'warn', unavailable = 'danger' }
 
 local function vec(i, x, y)
   local p = V[i]

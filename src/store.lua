@@ -58,12 +58,17 @@ M.SCHEMAS = {
   rlaps = { laps = { 'number', 1, 500 }, stamp = STAMP },
 }
 
+-- Morceau de clé : identifiant sûr en UTF-8 bien formé (la valeur stockée est une ligne de texte), ou entier.
+local function keyPart(text)
+  return (Util.isSafeId(text) and Util.isUtf8(text)) or text:match('^%-?%d+$') ~= nil
+end
+
 -- Clé d'entrée : genre puis identifiants sûrs (voiture, circuit, composé…), séparés par « : ».
 function M.entryKey(kind, ...)
   local parts = { kind }
   for _, id in ipairs({ ... }) do
     local text = tostring(id)
-    if not Util.isSafeId(text) and not text:match('^%-?%d+$') then return nil end
+    if not keyPart(text) then return nil end
     parts[#parts + 1] = text
   end
   return table.concat(parts, ':')
@@ -76,7 +81,7 @@ local function validKey(key)
     if first then
       if not part:match('^[%a_]+$') then return false end
       first = false
-    elseif not (Util.isSafeId(part) or part:match('^%-?%d+$')) then
+    elseif not keyPart(part) then
       return false
     end
   end

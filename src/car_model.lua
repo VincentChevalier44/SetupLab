@@ -1074,10 +1074,9 @@ local function lateralLimit(eff, n, lift, liftFront, guess)
   return ay, balance, FzF, FzR, dF, dR
 end
 
--- Décélération de freinage permise par l'adhérence (m/s²), avec transfert de charge et répartition imposée ; le couple
--- maximal des freins (eff.brakeForceMax) borne à part, dans la simulation : l'ellipse d'adhérence réduit l'adhérence en
--- virage, jamais le couple des freins (relecture du 09/11/2026). rearFirst : l'essieu arrière atteint sa limite
--- d'adhérence avant l'avant (instabilité, §8.4) ; non compté quand le couple de freinage limite seul.
+-- Décélération maximale de freinage (m/s²) avec transfert de charge et répartition imposée.
+-- rearFirst : l'essieu arrière atteint sa limite d'adhérence avant l'avant (instabilité, §8.4) ;
+-- non compté quand le couple de freinage limite seul.
 local function brakeLimit(eff, FzF, FzR)
   local m, h, bias = eff.mass, eff.cgHeight, eff.brakeBias
   local decel, rearFirst = 0, false
@@ -1087,7 +1086,7 @@ local function brakeLimit(eff, FzF, FzR)
     local capR = axleLongitudinal(eff.tyreR, eff.dR * eff.longGripR, max(0, FzR - shift), eff.camberRadR)
     local byFront, byRear = capF / bias, capR / max(1e-6, 1 - bias)
     rearFirst = byRear < byFront and byRear < eff.brakeForceMax
-    decel = min(byFront, byRear) / m
+    decel = min(byFront, byRear, eff.brakeForceMax) / m
   end
   return decel, rearFirst
 end
@@ -1443,8 +1442,11 @@ function M.configure(base, setup, conditions, tick, reuse)
     local i = min(count, floor(K.brakeLockSpeed / dv) + 1)
     local FzF = eff.mass * G * eff.b / eff.wheelbase + max(0, liftFront[i])
     local FzR = eff.mass * G * eff.a / eff.wheelbase + max(0, lift[i] - liftFront[i])
+    local torqueLimit = eff.brakeForceMax
+    eff.brakeForceMax = math.huge
     local gripDecel = brakeLimit(eff, FzF, FzR)
-    eff.brakeLockRisk = max(0, eff.brakeForceMax / max(1, eff.mass * gripDecel) - 1 - K.brakeLockMargin)
+    eff.brakeForceMax = torqueLimit
+    eff.brakeLockRisk = max(0, torqueLimit / max(1, eff.mass * gripDecel) - 1 - K.brakeLockMargin)
   end
   eff.bottoming = min(eff.rideMinF, eff.rideMinR) < K.minDynamicRideHeight
   -- Hauteur minimale (MIN_HEIGHT, contrôlée par AC au repos) avec la marge K.minHeightMargin : un setup est

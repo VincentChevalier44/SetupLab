@@ -1333,10 +1333,11 @@ end
 -- nouveau meilleur tour d'AC de la séance, une ligne du journal ; un avertissement si ce tour n'entre pas dans les temps
 -- d'AC de SetupLab (et pourquoi).
 -- Tour qui vient de finir, déjà compté par l'enregistreur : il appartient à la séance recommencée.
-local function recreditLap(lap)
+-- acCounted : AC a compté un meilleur tour dans la séance recommencée (chrono d'AC à zéro : aucun, pas d'acBest).
+local function recreditLap(lap, acCounted)
   local f = lap.family and app.recorder.laps.family[Recorder.bestKey(lap.family, lap.bucket)]
   if f == nil then return end
-  if lap.acValid then f.acBest = lap.time end
+  if lap.acValid and acCounted then f.acBest = lap.time end
   if lap.valid then
     f.sessionCount = 1
     if not (lap.traffic or lap.incident) then f.sessionBest = lap.time end
@@ -1350,7 +1351,7 @@ local function acBestCheck(lap)
     -- chrono d'AC remis à zéro (séance recommencée, même clé de séance) : vos meilleurs tours aussi
     if app.acBestSeen and Util.isFinite(ms) then
       Recorder.newSession(app.recorder)
-      recreditLap(lap)
+      recreditLap(lap, false)
       app.acBestSeen = nil
     end
     return
@@ -1360,7 +1361,7 @@ local function acBestCheck(lap)
   -- chrono d'AC plus lent qu'avant : séance recommencée (même clé de séance) ; vos meilleurs tours repartent de zéro
   if app.acBestSeen and best > app.acBestSeen then
     Recorder.newSession(app.recorder)
-    recreditLap(lap)
+    recreditLap(lap, true)
   end
   app.acBestSeen = best
   local same = Util.isFinite(lap.time) and math.abs(lap.time - best) < K.lapTimeEps

@@ -111,8 +111,9 @@ end
 
 -- Clés relues : seulement celles que Store.entryKey forme (octets hors UTF-8, séparateurs, genre absent : refusées).
 tests['TM07 stockage : clé relue de la forme de Store.entryKey, UTF-8 bien formé'] = function()
-  T.no(Util.isSafeId('voiture\215x'), 'octet isolé hors UTF-8')
-  T.ok(Util.isSafeId('ks_nürburgring'), 'accent en UTF-8')
+  T.no(Util.isUtf8('voiture\215x'), 'octet isolé hors UTF-8')
+  T.ok(Util.isUtf8('ks_nürburgring'), 'accent en UTF-8')
+  T.ok(Util.isSafeId('voiture\215x'), 'dossier hors UTF-8 : lu et nommé comme avant, seul le stockage le refuse')
   T.eq(Store.entryKey('cal', 'voiture\215x', 'monza'), nil)
   local back = Store.parse('setuplab-store 1|cal:voiture\215x:monza#mu=1|cal:ok car:monza#mu=1|:monza#mu=1|cal::monza#mu=1')
   local keys = {}

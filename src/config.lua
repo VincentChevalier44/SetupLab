@@ -231,7 +231,8 @@ M.K = {
   storeMaxString = 120,       -- chaîne stockée au plus (caractères sûrs seulement)
   storeCalTempTol = 10,       -- calibration reprise d'une séance précédente : piste à 10 °C près
   minHeightMargin = 0.001,    -- marge sur MIN_HEIGHT (m) : hauteur statique prévue, pas mesurée
-  modelVersion = 2,           -- version du modèle : une calibration ou une rugosité stockée par une autre est ignorée
+  modelVersion = 3,           -- version du modèle : une calibration ou une rugosité stockée par une autre est ignorée
+                              -- (3 : 1.5.10, vitesse de pointe au limiteur, réglages verrouillés à leur valeur montée)
   validateTolAbs = 0.15,      -- §14.1 : gain mesuré conforme au prévu à 0,15 s près…
   validateTolRel = 0.3,       -- … ou à 30 % du gain prévu (le plus large des deux)
   tyreLrPressureMax = 2,      -- écart gauche / droite de pression à chaud (psi) au-delà duquel l'essieu n'est pas ancré

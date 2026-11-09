@@ -1,4 +1,4 @@
--- Contrôles du modèle (relecture du 09/11/2026) : vitesse de pointe au limiteur, freinage combiné, réglages verrouillés,
+-- Contrôles du modèle (relecture du 09/11/2026) : vitesse de pointe au limiteur, réglages verrouillés,
 -- optimiseur au-delà des dimensions de Halton.
 local T = require('t')
 local Util = require('src/util')
@@ -74,21 +74,6 @@ tests['MC03 réglage verrouillé : sa valeur montée sert au modèle'] = functio
   T.ok(lockedValue ~= nil)
   T.near(setup.brakeBias, lockedValue / 100, 1e-6, 'répartition simulée ' .. setup.brakeBias .. ', montée '
     .. lockedValue / 100)
-end
-
--- Freinage combiné : l'ellipse d'adhérence réduit l'adhérence en virage, jamais le couple des freins. Les tables de
--- freinage sont celles de l'adhérence seule ; la puissance de freinage borne à part (eff.brakeForceMax).
-tests['MC04 freinage : tables de l\'adhérence seule, couple des freins borné à part'] = function()
-  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
-  local base = CarModel.build(Datasource.readCar(h, 0, SYNC), nil)
-  local strong, weak = CarModel.defaultSetup(base), CarModel.defaultSetup(base)
-  weak.brakePower = 0.4
-  local a = assert(CarModel.configure(base, strong, { airTemp = 20 }))
-  local brakeA, forceA = a.brake[2][10], a.brakeForceMax
-  local b = assert(CarModel.configure(base, weak, { airTemp = 20 }))
-  T.ok(Util.isFinite(forceA) and forceA < math.huge, 'couple des freins connu')
-  T.near(b.brake[2][10], brakeA, 1e-9, 'adhérence seule : même table')
-  T.near(b.brakeForceMax, forceA * 0.4, 1e-6 * forceA, 'couple des freins proportionnel')
 end
 
 return tests
