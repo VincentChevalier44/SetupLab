@@ -47,7 +47,7 @@ Review and clean-up:
 - Track grip read from CSP is normalised in one place; one gravity constant; lap-time tolerance, tyre vocabulary, brake bias range and other values moved to the configuration.
 - The list of CSP functions in the J0 report matches the functions SetupLab really calls. The issue template asks for the CSP version.
 - The archive now contains the `LICENSE` file.
-- Offline test bench: 429 tests, 20 counter-checks (each fix undone in turn must fail a test).
+- Offline test bench: 430 tests, 30 counter-checks (each fix undone in turn must fail a test).
 
 ## 1.0.0-beta.1.5.8 — 2026-11-05 — beta 1.5.8: repository renamed SetupLab
 
