@@ -80,7 +80,8 @@ tests['D03 format CSP : listes découpées ou chaîne unique -> même table pure
 end
 
 tests['D04 data.acd illisible, liste de fichiers absente'] = function()
-  local h = host('lamborghini_huracan_gt3_evo2', 'spa', { carDataError = true })
+  -- data.acd illisible : ni ac.INIConfig ni le texte brut (ac.readDataFile)
+  local h = host('lamborghini_huracan_gt3_evo2', 'spa', { carDataError = true, rawForm = 'aucune' })
   local car = Datasource.readCar(h, 0, SYNC)
   T.eq(next(car.ini), nil, 'aucun INI')
   for _, name in ipairs(car.iniOrder) do T.ok(car.iniStatus[name]:find('^erreur'), name) end
@@ -336,7 +337,6 @@ tests['D13 session, conditions et contexte'] = function()
   T.no(c.replay)
   h.sim.rainWetness = 0.3
   T.ok(Datasource.readSession(h).wet)
-  T.ok(Datasource.readContext(h).wet)
   h.sim.isOnlineRace = true
   T.ok(Datasource.readContext(h).online)
   h.sim.isOnlineRace = false

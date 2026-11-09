@@ -127,7 +127,7 @@ tests['OV02 version roulée : verdict sur vos tours, réglages du plus au moins 
   T.ok(waitFor(h, function() return r.version >= 1 and r.phase == 'tours' end), 'v1')
   -- version prête, pas encore dans la voiture : annoncée en bas
   local texts = overlay(h)
-  T.ok(find(texts, 'v1 prête : +'), 'version prête annoncée')
+  T.ok(find(texts, 'v1 prête : -'), 'version prête annoncée (gain : plus rapide)')
   -- un tour avec le setup de départ (« avant »)
   local profile = drivenProfile(h, app)
   T.ok(waitFor(h, function()

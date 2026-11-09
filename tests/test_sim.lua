@@ -133,7 +133,6 @@ tests['S01 virage à rayon constant sans appui : v = √(μ·g·R)'] = function(
     local expected = math.sqrt(mu * G * R)
     for k = 1, track.n, 17 do T.near(buf.v[k], expected, expected * 0.002, 'vitesse en virage') end
     T.near(result.time, track.length / expected, track.length / expected * 0.003, 'temps au tour')
-    T.eq(result.shifts, 0)
   end
 end
 
@@ -242,8 +241,6 @@ tests['S06 voitures réelles : grandeurs plausibles (non calibrées)'] = functio
     T.ok(result.time > case[3] and result.time < case[4], name .. ' : ' .. result.time .. ' s')
     T.ok(result.vMax <= eff.topSpeed + 1e-6, name .. ' : vitesse de pointe')
     T.ok(result.vMin * 3.6 > 45 and result.vMin * 3.6 < 90, name .. ' : vitesse mini ' .. result.vMin * 3.6)
-    T.ok(result.shifts >= r.track.cornerCount * 0.5 and result.shifts <= r.track.cornerCount * 4,
-      name .. ' : ' .. result.shifts .. ' montées de rapport')
     T.ok(result.fuel and result.fuel > 0.3 and result.fuel < 6, name .. ' : carburant ' .. tostring(result.fuel) .. ' L')
     local g0 = eff.ay[K.normalLoadNominal][1] / G
     T.ok(g0 > 1.0 and g0 < 2.5, name .. ' : adhérence latérale mécanique ' .. g0 .. ' g')

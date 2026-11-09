@@ -152,7 +152,6 @@ EN = {
     'setup en piste': 'setup on track',
     'votre meilleur': 'your best',
     'votre tour moyen': 'your average lap',
-    'affinage arrêté': 'refinement stopped',
     "« Essayer vN » met la version dans la voiture, en un clic. Roulez avec : rien n'est gardé avant « Valider ».": '"Try vN" puts the version in the car, in one click. Drive with it: nothing is kept before "Validate".',
     "« SetupLab Overlay » (barre d'apps CSP) : en roulant, mieux ou moins bien que le setup d'avant sur vos tours, et les réglages qui ont changé.": '"SetupLab Overlay" (CSP app bar): while driving, better or worse than the previous setup on your laps, and the settings that changed.',
     "« Valider vN » la garde ; refusez un réglage précis ligne par ligne. Elle devient votre référence : SetupLab repart d'elle.": '"Validate vN" keeps it; refuse a specific setting row by row. It becomes your reference: SetupLab carries on from it.',

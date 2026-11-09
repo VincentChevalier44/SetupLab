@@ -17,6 +17,11 @@
 -- Même règle pour les incidents de pilotage (choix de Vincent du 05/11/2026) : en séance de course, un tour avec sortie de
 -- piste, coupe, tête-à-queue, glissade, blocage de roue, choc ou tour invalidé par AC est gardé, marqué (lap.incident,
 -- le premier) ; la voie des stands, la voiture replacée sur la piste et les autres raisons le rejettent toujours.
+-- Temps d'AC (demande de Vincent du 09/11/2026 : « il ne m'affiche pas les mêmes [temps] que ceux que je peux avoir
+-- nativement dans l'onglet information… la télémétrie doit être parfaite ») : un tour qu'AC compte (jamais invalidé par AC,
+-- temps officiel confirmé, même setup du début à la fin) mais que SetupLab écarte de son analyse pour une raison de qualité
+-- (M.QUALITY_REASONS : trafic, incident, répartition de freinage touchée…) est marqué lap.acValid ; son temps entre dans le
+-- meilleur tour d'AC de sa famille (f.acBest), jamais dans le meilleur tour propre (f.best), le nombre ni la moyenne.
 -- L'origine de la ligne IA peut s'écarter de la ligne de chronométrage : les écarts de couverture se
 -- mesurent en tenant compte du bouclage de la progression.
 --
@@ -68,7 +73,10 @@ end
 local function bool(object, key)
   local v = get(object, key)
   if type(v) == 'boolean' then return v end
-  if type(v) == 'number' or type(v) == 'cdata' then return tonumber(v) ~= 0 end
+  if type(v) == 'number' or type(v) == 'cdata' then
+    local n = tonumber(v)
+    if Util.isFinite(n) then return n ~= 0 end
+  end
   return nil
 end
 
@@ -93,7 +101,7 @@ end
 -- Abandonne le tour en cours (le prochain passage de ligne en démarrera un nouveau).
 function M.abort(rec, reason)
   rec.n, rec.maxGap, rec.lastP, rec.invalid, rec.trafficTime, rec.trafficLap = 0, 0, nil, nil, 0, false
-  rec.raceIncident = nil
+  rec.raceIncident, rec.acInvalid, rec.acDisq, rec.acResets = nil, nil, nil, nil
   rec.state = 'attente'
   rec.abortReason = reason
   rec.drsPrev = nil
@@ -101,7 +109,7 @@ end
 
 local function startLap(rec, signature, lapCount, now, family)
   rec.n, rec.maxGap, rec.lastP, rec.invalid, rec.inc, rec.trafficTime, rec.trafficLap = 0, 0, nil, nil, nil, 0, false
-  rec.raceIncident = nil
+  rec.raceIncident, rec.acInvalid, rec.acDisq, rec.acResets = nil, nil, nil, nil
   rec.state = 'enregistrement'
   rec.signatureStart, rec.familyStart = signature, family
   rec.lapIndex = lapCount
@@ -149,7 +157,11 @@ end
 local function keep(rec, lap)
   local laps = rec.laps
   laps.last = lap
-  if not lap.valid then return end
+  if not lap.valid then
+    -- tour compté par AC, écarté de l'analyse : meilleur tour d'AC de sa famille seulement
+    if lap.acValid then M.keepFamily(laps, lap) end
+    return
+  end
   -- tour de course en trafic ou avec un incident : jamais le meilleur tour d'un setup (calibration, validation, tour rapide)
   if lap.traffic or lap.incident then return M.keepFamily(laps, lap) end
   local key = M.bestKey(lap.signature, lap.bucket)
@@ -171,8 +183,10 @@ local function keep(rec, lap)
 end
 
 -- Vos temps par « famille » de setup (sans les réglages changés en roulant : carburant, répartition de freinage) :
--- meilleur tour, nombre de tours valides et somme des temps (moyenne de course). Tour de course en trafic : compté dans
+-- meilleur tour, nombre de tours valides et somme des temps (moyenne de course) ; tour de course en trafic : compté dans
 -- le nombre et la moyenne (traffic : combien d'entre eux), jamais dans le meilleur tour (nil tant qu'aucun tour libre).
+-- De la séance (M.newSession) : acBest, meilleur tour compté par AC (tours écartés de l'analyse compris) ; sessionBest et
+-- sessionCount, meilleur tour propre et nombre de tours valides.
 function M.keepFamily(laps, lap)
   if lap.family == nil then return end
   local fkey = M.bestKey(lap.family, lap.bucket)
@@ -183,10 +197,24 @@ function M.keepFamily(laps, lap)
     laps.familyOrder[#laps.familyOrder + 1] = fkey
     if #laps.familyOrder > K.recorderMaxSignatures then laps.family[table.remove(laps.familyOrder, 1)] = nil end
   end
+  -- meilleur tour d'AC de la séance (09/11/2026, comme l'onglet d'informations du jeu) : tours propres et tours comptés par
+  -- AC écartés de l'analyse ; remis à zéro à chaque nouvelle séance (M.newSession)
+  if lap.acValid and (f.acBest == nil or lap.time < f.acBest) then f.acBest = lap.time end
+  if not lap.valid then return end
   f.count, f.sum = f.count + 1, f.sum + lap.time
+  f.sessionCount = (f.sessionCount or 0) + 1
   if lap.traffic then f.traffic = (f.traffic or 0) + 1 end
   if lap.incident then f.incident = (f.incident or 0) + 1 end
-  if not (lap.traffic or lap.incident) and (f.best == nil or lap.time < f.best) then f.best = lap.time end
+  if not (lap.traffic or lap.incident) then
+    if f.best == nil or lap.time < f.best then f.best = lap.time end
+    if f.sessionBest == nil or lap.time < f.sessionBest then f.sessionBest = lap.time end
+  end
+end
+
+-- Nouvelle séance : vos meilleurs tours de la séance repartent de zéro (meilleur tour d'AC, meilleur tour propre et nombre
+-- de tours de la séance) ; l'analyse (meilleur tour propre, nombre, moyenne) garde tous les tours du lancement.
+function M.newSession(rec)
+  for _, f in pairs(rec.laps.family) do f.acBest, f.sessionBest, f.sessionCount = nil, nil, 0 end
 end
 
 -- Tour terminé, avant le temps officiel : copie, validité (hors temps), conditions moyennes.
@@ -209,6 +237,11 @@ local function buildLap(rec, signatureEnd, context)
     reason = 'trou de couverture de ' .. Util.fmt(gap * (context.trackLength or 0), 0) .. ' m (retour au stand ?)'
   end
   lap.reason = reason
+  lap.acInvalid = rec.acInvalid
+  -- temps d'AC : pas le temps d'un seul setup ni d'un tour entier (relecture du 09/11/2026 : vu quelle que soit la
+  -- première raison retenue)
+  lap.acDisq = rec.acDisq or rec.signatureStart == nil or signatureEnd ~= rec.signatureStart or rec.n < K.recorderMinSamples
+    or gap * (context.trackLength or 0) > K.recorderMaxGapM or nil
   -- séance de course : tour en trafic, ou avec un incident de pilotage, gardé et marqué
   lap.traffic = rec.trafficLap == true or nil
   lap.incident = rec.raceIncident
@@ -254,6 +287,9 @@ local function finalize(rec, timeSec, timeReason)
   local lap = rec.pending.lap
   rec.pending = nil
   lap.time = timeSec
+  -- compté par AC : temps officiel confirmé, jamais invalidé par AC, rejet seulement pour une raison de qualité (ou aucun)
+  lap.acValid = timeReason == nil and Util.isFinite(timeSec) and timeSec > 0 and lap.acInvalid ~= true
+    and lap.acDisq ~= true and (lap.reason == nil or M.QUALITY_REASONS[lap.reason] == true) or nil
   lap.reason = lap.reason or timeReason
   lap.valid = lap.reason == nil
   rec.finished = rec.finished + 1
@@ -362,7 +398,7 @@ local function incident(rec, car, now)
     local rear, rearN = 0, 0
     -- roue délestée (vibreur, roue intérieure levée) : un fort glissement n'y est pas un blocage
     local mass = num(car, 'mass')
-    local minLoad = mass and mass * 9.81 / 4 * K.incidentMinLoad or nil
+    local minLoad = mass and mass * Util.G / 4 * K.incidentMinLoad or nil
     for w = 1, 4 do
       local wheel = get(wheels, w - 1)
       local ratio = num(wheel, 'slipRatio')
@@ -381,18 +417,24 @@ local function incident(rec, car, now)
   return nil
 end
 
--- Trafic (demande de Vincent du 03/11/2026 ; même règle en ligne et hors ligne, voitures de l'IA comprises, choisie par
--- Vincent le même jour) : une autre voiture juste devant (aspiration, gêne) ou à côté
--- fausse la mesure du tour, qui ne doit compter ni pour la calibration ni pour le minimum de tours propres. Distance le
--- long de la ligne IA (progression), bouclage compris ; voitures déconnectées, inactives ou dans la voie des stands
--- ignorées. Une voiture proche à l'échantillon ajoute sa durée (1/K.recorderHz) au tour ; au-delà de K.trafficMaxTime
--- cumulées, le tour est rejeté. Renvoie la raison, ou nil.
 M.TRAFFIC_REASON = 'trafic : une autre voiture à moins de ' .. K.trafficAheadM .. ' m devant ou à côté'
 
 -- Incidents de pilotage gardés en séance de course (le tour compte pour la course seulement).
 M.RACE_INCIDENTS = { ['choc (dégâts)'] = true, ['coupe de piste'] = true, ['tête-à-queue'] = true,
   ['blocage de roue'] = true, ['grosse glissade'] = true }
 
+-- Raisons de rejet propres à l'analyse de SetupLab : AC compte ces tours (temps officiel, même setup) ; ils restent dans
+-- le meilleur tour d'AC de leur famille (f.acBest). Les incidents de pilotage, plus le trafic et trois autres raisons.
+M.QUALITY_REASONS = { [M.TRAFFIC_REASON] = true, ['sortie de piste'] = true,
+  ['répartition de freinage modifiée en roulant'] = true, ['mémoire pleine'] = true }
+for reason in pairs(M.RACE_INCIDENTS) do M.QUALITY_REASONS[reason] = true end
+
+-- Trafic (demande de Vincent du 03/11/2026 ; même règle en ligne et hors ligne, voitures de l'IA comprises, choisie par
+-- Vincent le même jour) : une autre voiture juste devant (aspiration, gêne) ou à côté
+-- fausse la mesure du tour, qui ne doit compter ni pour la calibration ni pour le minimum de tours propres. Distance le
+-- long de la ligne IA (progression), bouclage compris ; voitures déconnectées, inactives ou dans la voie des stands
+-- ignorées. Une voiture proche à l'échantillon ajoute sa durée (1/K.recorderHz) au tour ; au-delà de K.trafficMaxTime
+-- cumulées, le tour est rejeté. Renvoie la raison, ou nil.
 local function traffic(rec, host, p, context)
   local length, count = context.trackLength, context.carsCount
   if not (length and length > 0 and count and count > 1) then return nil end
@@ -463,6 +505,14 @@ function M.update(rec, host, now, signatureFn, context)
   rec.peakArmed = rec.state == 'enregistrement'
   if rec.pending then finished = resolvePending(rec, car, now) or finished end
   if rec.state ~= 'enregistrement' then return finished end
+  -- tour invalidé par AC, voie des stands, voiture replacée : vus à chaque image, quelle que soit la première raison
+  -- retenue (temps d'AC, 09/11/2026)
+  if bool(car, 'isLapValid') == false then rec.acInvalid = true end
+  if bool(car, 'isInPitlane') == true then rec.acDisq = true end
+  local resets = num(car, 'resetCounter')
+  if resets then
+    if rec.acResets == nil then rec.acResets = resets elseif resets > rec.acResets then rec.acDisq = true end
+  end
   -- invalidation (la première raison est conservée) ; séance de course : incidents de pilotage gardés à part
   if rec.invalid == nil and context.raceSession then
     if bool(car, 'isInPitlane') == true then
@@ -517,7 +567,10 @@ function M.update(rec, host, now, signatureFn, context)
     if d < -0.5 then d = d + 1 elseif d > 0.5 then d = d - 1 end
     if d < 0 then
       local back = -d * (context.trackLength or 0)
-      if back > K.recorderMaxGapM then rec.invalid = rec.invalid or ('recul de ' .. Util.fmt(back, 0) .. ' m (téléportation ?)') end
+      if back > K.recorderMaxGapM then
+        rec.invalid = rec.invalid or ('recul de ' .. Util.fmt(back, 0) .. ' m (téléportation ?)')
+        rec.acDisq = true
+      end
       d = 0
     end
     rec.maxGap = max(rec.maxGap, d)
@@ -528,7 +581,7 @@ function M.update(rec, host, now, signatureFn, context)
   local b = rec.buf
   local acc, pos = get(car, 'acceleration'), get(car, 'position')
   b.p[i], b.v[i] = p, v
-  b.ax[i], b.ay[i] = (num(acc, 'z') or 0) * 9.80665, (num(acc, 'x') or 0) * 9.80665
+  b.ax[i], b.ay[i] = (num(acc, 'z') or 0) * Util.G, (num(acc, 'x') or 0) * Util.G
   b.gas[i], b.brake[i], b.gear[i], b.rpm[i] = num(car, 'gas') or 0, num(car, 'brake') or 0, num(car, 'gear') or 0,
     num(car, 'rpm') or 0
   local s = rec.sums

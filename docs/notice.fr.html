@@ -202,7 +202,7 @@
 
 <header class="top">
   <div class="inner">
-    <span class="badge">Version 1.0 — bêta 1.5.8</span>
+    <span class="badge">Version 1.0 — bêta 1.5.9</span>
     <p class="switch"><a href="notice.html" hreflang="en">English version</a></p>
     <h1>SetupLab — notice d'utilisation</h1>
     <p class="lead">L'app Custom Shaders Patch qui calcule, explique et affine vos setups dans Assetto Corsa, en se calant sur vos propres tours.</p>
@@ -256,7 +256,7 @@
   <h2>2. Installation</h2>
   <ol>
     <li>Prérequis : Assetto Corsa avec <strong>Custom Shaders Patch 0.2.11</strong> (la version gratuite, installée par Content Manager) ou plus récent, previews payantes comprises.</li>
-    <li>Décompresser l'archive <code>SetupLab-1.0.0-beta.1.5.8.zip</code> dans <code>assettocorsa/apps/lua/</code> : elle contient déjà le dossier <code>SetupLab/</code>. Au final, <code>assettocorsa/apps/lua/SetupLab/</code> contient <code>SetupLab.lua</code> et <code>manifest.ini</code> (pas de dossier <code>SetupLab</code> dans un autre <code>SetupLab</code>). Pour mettre à jour : fermer Assetto Corsa, <strong>supprimer l'ancien dossier <code>apps/lua/SetupLab</code></strong>, puis décompresser la nouvelle archive. Vos réglages, la mémoire des circuits et vos setups sont gardés : ils sont rangés hors de ce dossier. Depuis la 1.5.4, SetupLab peut aussi se mettre à jour lui-même (voir plus bas).</li>
+    <li>Décompresser l'archive <code>SetupLab-1.0.0-beta.1.5.9.zip</code> dans <code>assettocorsa/apps/lua/</code> : elle contient déjà le dossier <code>SetupLab/</code>. Au final, <code>assettocorsa/apps/lua/SetupLab/</code> contient <code>SetupLab.lua</code> et <code>manifest.ini</code> (pas de dossier <code>SetupLab</code> dans un autre <code>SetupLab</code>). Pour mettre à jour : fermer Assetto Corsa, <strong>supprimer l'ancien dossier <code>apps/lua/SetupLab</code></strong>, puis décompresser la nouvelle archive. Vos réglages, la mémoire des circuits et vos setups sont gardés : ils sont rangés hors de ce dossier. Depuis la 1.5.4, SetupLab peut aussi se mettre à jour lui-même (voir plus bas).</li>
     <li>En jeu, ouvrir <strong>SetupLab</strong> depuis la barre d'apps ou l'écran de setup. Trois autres fenêtres existent : <strong>SetupLab Track</strong> (la même interface, ouverte depuis la barre d'apps en roulant : en course, on part sur la grille), <strong>SetupLab Overlay</strong> (en piste) et <strong>SetupLab Debug</strong> (diagnostic).</li>
   </ol>
     <h3>Mise à jour en jeu</h3>
@@ -353,7 +353,7 @@
 
 <section id="chargement">
   <h2>9. Charger un setup dans la voiture</h2>
-  <p>Le chargement se fait <strong>au stand, voiture arrêtée, menu de setup ouvert</strong>. À côté du bouton vert, SetupLab affiche le fichier à charger, l'état du stand (<em>au stand</em>, <em>voiture arrêtée</em>, <em>menu de setup ouvert</em>, chacun en vert ou en orange) et la raison d'un refus.</p>
+  <p>Le chargement se fait <strong>au stand, voiture arrêtée, menu de setup ouvert</strong> ; en séance de course, aussi <strong>sur la grille avant le départ</strong> (reprendre sa course, partir de sa qualif, essayer la v1 de course). Une fois la course lancée, rien n'est chargé avant l'arrivée. À côté du bouton vert, SetupLab affiche le fichier à charger, l'état du stand (<em>au stand</em> ou <em>sur la grille</em>, <em>voiture arrêtée</em>, <em>menu de setup ouvert</em>, chacun en vert ou en orange) et la raison d'un refus.</p>
   <ol>
     <li>Cliquer <span class="btn go">Charger le setup … dans la voiture</span> : un clic suffit.</li>
     <li>SetupLab copie d'abord le setup en cours quand cette copie sert (<code>SetupLab_Avant_chargement_….ini</code>, <code>SetupLab_Before_load_….ini</code> en anglais), charge le fichier, puis vérifie que la voiture a bien le setup prévu. La copie n'est pas faite quand la voiture a, sans retouche, un setup de SetupLab.</li>
@@ -365,7 +365,7 @@
   <h2>10. Vos temps</h2>
   <p>SetupLab se base sur <strong>vos temps réels</strong> :</p>
   <ul>
-    <li><strong>votre meilleur tour</strong> avec le setup actuel (en course : <strong>votre tour moyen</strong>) ;</li>
+    <li><strong>votre meilleur tour de la séance</strong> avec le setup actuel, tel que le compte le chrono d'AC : le même temps que l'onglet d'informations du jeu, tours en trafic ou avec un petit incident compris ; le tour propre retenu par l'analyse est affiché à côté s'il diffère (en course : <strong>votre tour moyen</strong>) ;</li>
     <li><strong>objectif estimé</strong> : votre temps moins le gain prévu ;</li>
     <li>pour chaque version : <strong>vos tours</strong> avec elle, le <strong>gain prévu</strong> et le <strong>gain réel</strong>. Une version partielle compte les tours faits avec son essai complet.</li>
   </ul>
@@ -399,7 +399,7 @@
 
 <section id="memoire">
   <h2>13. Mémoire du circuit et cadenas</h2>
-  <p>Le setup que vous validez est gardé, d'un lancement d'AC à l'autre, pour cette voiture sur ce circuit (disposition comprise), par <strong>séance</strong> (essai ou journée circuit, qualification, course) et par <strong>état de piste</strong> (sec ou pluie). L'onglet <strong>MÉMOIRE</strong> les liste et propose de les charger, en un clic, au stand. Un setup <strong>figé</strong> (cadenas) n'est plus changé par l'affinage ; « Déverrouiller » le rend à l'affinage.</p>
+  <p>Le setup que vous validez est gardé, d'un lancement d'AC à l'autre, pour cette voiture sur ce circuit (disposition comprise), par <strong>séance</strong> (essai ou journée circuit, qualification, course) et par <strong>état de piste</strong> (sec ou pluie). L'onglet <strong>MÉMOIRE</strong> les liste et propose de les charger, en un clic, au stand. Un setup <strong>figé</strong> (cadenas) n'est plus changé par l'affinage ; « Déverrouiller » le rend à l'affinage. Chacun affiche <strong>votre vrai temps</strong> avec lui, toutes séances confondues (meilleur tour, ou tour moyen en course) ; avant votre premier tour avec lui, le temps simulé s'affiche en gris, dit comme tel.</p>
 </section>
 
 <section id="course">
@@ -431,7 +431,8 @@
 
 <section id="pluie">
   <h2>16. Pluie</h2>
-  <p>La pluie de CSP, et celle de Pure, qui passe par CSP, est lue directement. Dès que la piste mouille, chaque calcul propose un <strong>setup pluie</strong> : composé choisi entre slicks, intermédiaires et pneus pluie ; pressions pour des pneus plus froids ; aileron et réglages optimisés avec l'adhérence mouillée ; antipatinage et ABS plus stricts. Les tours mouillés calibrent un modèle à part du sec.</p>
+  <p>La pluie de CSP, et celle de Pure, qui passe par CSP, est lue directement. Dès que la piste mouille, chaque calcul propose un <strong>setup pluie</strong> : composé choisi entre slicks, intermédiaires et pneus pluie ; pressions pour des pneus plus froids ; aileron et réglages optimisés avec l'adhérence mouillée ; antipatinage et ABS plus stricts. Les tours mouillés calibrent un modèle à part du sec. La piste ne passe du sec à la pluie (ou l'inverse) que si le nouvel état dure 20 secondes : une eau lue un instant ne fait plus basculer les setups.</p>
+  <p><strong>Pneus de qualification</strong> : sur piste sèche, un setup de qualification prend le composé le plus tendre de la gamme montée (hypersoft, ultrasoft, supersoft, puis soft). Un composé refusé avec « Modifier… », ou imposé dans les réglages, passe avant.</p>
 </section>
 
 <section id="onglets">
@@ -470,7 +471,7 @@
   <ul>
     <li>Les numéros de version continuent d'une séance à l'autre sur le même circuit, quelle que soit la langue.</li>
     <li>Le champ <strong>Nom du setup</strong> remplace « SetupLab ». Les accents et les espaces sont retirés ; le genre n'est pas répété si votre nom finit déjà par lui.</li>
-    <li><strong>Votre meilleur tour</strong> s'ajoute à la fin du nom d'une version de qualification gardée (<code>SetupLab_Qualif_v2_1.41.792.ini</code>), voiture arrêtée, jamais en roulant.</li>
+    <li><strong>Votre meilleur tour</strong> (chrono d'AC) s'ajoute à la fin du nom d'une version de qualification gardée (<code>SetupLab_Qualif_v2_1.41.792.ini</code>), voiture arrêtée, jamais en roulant.</li>
     <li>Jamais d'écrasement : un nom déjà pris reçoit <code>-2</code>, <code>-3</code>…</li>
   </ul>
   <h3>Rangement automatique</h3>
@@ -528,7 +529,7 @@
 
 <footer>
   <div class="inner">
-    SetupLab 1.0 — bêta 1.5.8 (<code>1.0.0-beta.1.5.8</code>) · Licence MIT ·
+    SetupLab 1.0 — bêta 1.5.9 (<code>1.0.0-beta.1.5.9</code>) · Licence MIT ·
     <a href="https://github.com/VincentChevalier44/SetupLab">github.com/VincentChevalier44/SetupLab</a><br>
     Assetto Corsa est une marque de Kunos Simulazioni. SetupLab est un projet indépendant.
   </div>

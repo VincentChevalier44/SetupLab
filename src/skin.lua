@@ -241,10 +241,7 @@ function M.new(real, rgbm, vec2, translate, fontDir)
     return clicked
   end
 
-  -- Bouton Racing 26 : parallélogramme, Barlow Condensed italique très gras. primary : cyan, texte sombre ; go : vert ;
-  -- danger : rouge. Neutre : aplat plus clair que les panneaux, cerné d'un filet (cyan au survol) : un bouton ne se
-  -- confond pas avec le texte (constat de Vincent du 02/11/2026). size : nil (largeur du libellé), x < 0 (toute la
-  -- largeur), x > 0 (largeur donnée) ; y > 0 : hauteur.
+  -- Bouton Racing 26 (drawButton), libellé traduit.
   function S.button(label, size, style)
     local visible, id = split(label)
     return (roleCall('button', drawButton, translate(visible), id, size, style))

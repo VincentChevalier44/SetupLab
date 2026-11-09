@@ -8,7 +8,7 @@ local M = {}
 M.appName = 'SetupLab'
 -- Première bêta publique (décision de Vincent du 22/10/2026 : « on la présentera comme la version bêta numéro
 -- un, v1.0 ») ; les versions 1.0.0 à 1.7.0 d'avant étaient internes (CHANGELOG.md).
-M.version = '1.0.0-beta.1.5.8'
+M.version = '1.0.0-beta.1.5.9'
 M.milestone = 'J0 à J8 (qualification, course, mesure, DRS, ERS, interface, persistance), chargement dans la voiture, affinage, pluie, '
   .. 'activation, mémoire du circuit, validation avant enregistrement, vos temps réels, vos retouches gardées'
 M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus récente est ignorée
@@ -31,8 +31,6 @@ M.EDITABLE = { 'compoundChoice', 'fuelMarginPct', 'fuelQualiLaps', 'perfStab', '
 M.exportTestPrefix = 'SetupLab_Test_'
 M.fileDefaultName = 'SetupLab'
 M.fileGenre = { quali = 'Qualif', race = 'Course' }
-M.exportQualiPrefix = M.fileDefaultName .. '_' .. M.fileGenre.quali .. '_'
-M.exportRacePrefix = M.fileDefaultName .. '_' .. M.fileGenre.race .. '_'
 -- Copie du setup en cours écrite juste avant un chargement dans la voiture (réversibilité).
 M.exportBackupPrefix = 'SetupLab_Avant_chargement_'
 
@@ -144,7 +142,7 @@ M.help = {
     .. 'risque de panne sèche, voiture un peu plus lourde.',
   fuelQualiLaps = 'Tours de carburant embarqués pour un setup de tour rapide (0 = la règle par défaut : tour de sortie, '
     .. 'tour lancé et tour de rentrée).',
-  perfStab = 'Équilibre recherché par le calcul : vers 0, le setup le plus rapide possible ; vers 1, un setup plus stable et '
+  perfStab = 'Équilibre recherché par le calcul : vers 1, le setup le plus rapide possible ; vers 0, un setup plus stable et '
     .. 'plus facile à piloter, au prix d\'un peu de temps.',
   drsTrafficPct = 'Part des tours de course où vous pensez être dans la fenêtre du DRS (trafic). Sert au réglage d\'aileron '
     .. 'et de rapports en course.',
@@ -173,7 +171,8 @@ M.help = {
   language = 'Langue de toute l\'application : menus, messages, aides et overlay.',
   onlineActive = 'Coché (par défaut) : en ligne, SetupLab fonctionne exactement comme hors ligne, dans toutes les séances. '
     .. 'Comme hors ligne, un setup imposé par le serveur ne se charge pas, et un tour passé derrière ou à côté d\'une autre '
-    .. 'voiture (aspiration, gêne) n\'est pas compté (en séance de course, il compte pour la course seulement). Rien n\'est '
+    .. 'voiture (aspiration, gêne) n\'est pas compté dans l\'analyse, mais reste dans vos temps d\'AC (en séance de course, '
+    .. 'il compte pour la course). Rien n\'est '
     .. 'envoyé au serveur. Décoché : SetupLab se met en pause en ligne (par exemple si le règlement d\'une ligue interdit les '
     .. 'apps).',
 }
@@ -411,6 +410,26 @@ M.K = {
   -- Composés de pneus (D16, D18)
   wetCompoundPatterns = { 'wet', 'rain', 'pluie', 'inter', 'pioggia', 'regen' },  -- jamais choisis automatiquement
   wetCompoundShortNames = { 'W', 'I', 'IM', 'INT', 'WT' },
+  -- pneus de qualification (règle de Vincent du 09/11/2026 : le plus tendre, hypersoft et ultrasoft compris) : du plus
+  -- tendre au moins tendre, motifs du nom (minuscules, sans ponctuation) et nom court ; mots de dureté retirés du nom
+  -- pour reconnaître la gamme (« Slick », « Sec - », « Grip Formule 3 - »)
+  tyreSoftLevels = {
+    { words = { 'hyper ?soft', 'hyper ?tendre' }, short = 'HS' },
+    { words = { 'ultra ?soft', 'ultra ?tendre' }, short = 'US' },
+    { words = { 'super ?soft', 'super ?tendre', 'extra ?soft' }, short = 'SS' },
+    { words = { 'soft', 'tendre' }, short = 'S' },
+  },
+  tyreHardnessWords = { 'hyper ?soft', 'ultra ?soft', 'super ?soft', 'extra ?soft', 'soft', 'hyper ?tendre', 'ultra ?tendre',
+    'super ?tendre', 'tendre', 'medium', 'médium', 'moyen', 'extra ?hard', 'super ?hard', 'hard', 'dure', 'dur' },
+  brakeBiasMin = 0.3,         -- répartition de freinage avant plausible (fichier et setup)
+  brakeBiasMax = 0.95,
+  optSteps = { 4, 2, 1 },     -- pas (crans) de la descente de coordonnées, du plus grand au plus petit
+  camberTenth = 0.1,          -- carrossage des fichiers de setup en dixièmes de degré
+  lapTimeEps = 0.0005,        -- s : deux temps au tour égaux à la milliseconde d'AC près
+  raceLapsSliderMax = 150,    -- curseur des tours de la course (au-delà : saisie, jusqu'à K.raceMaxLaps)
+  roadGripMin = 0.5,          -- grip de la piste hors de 0,5…1,1 : valeur aberrante (relecture du 29/10/2026)
+  roadGripMax = 1.1,
+  roadGripPercentMax = 110,   -- grip lu en pour cent (1,5 à 110) : ramené à 0…1
   compoundTieSeconds = 0.05,  -- à moins de 0,05 s, le composé monté est gardé
   maxSessionRate = 10,        -- taux de consommation ou d'usure de la session : borne (donnée non fiable)
 
@@ -497,6 +516,8 @@ M.K = {
   wetThreshold = 0.05,        -- humidité, eau ou pluie au-delà : piste dite mouillée (rapport J0)
   wetEnter = 0.15,            -- état « pluie » dès que humidité, eau ou pluie atteint ce niveau (0 à 1)
   wetExit = 0.05,             -- retour à l'état « sec » seulement sous ce niveau (hystérésis)
+  wetHoldSeconds = 20,        -- s de suite au-delà du seuil avant de basculer (choix de Vincent du 09/11/2026 : « le plus
+                              -- réel » ; l'eau de CSP passait de 19 % à 39 % puis à rien en 90 s) ; première relecture : tel quel
   conditionsWaterStep = 0.25, -- écart d'eau sur la piste (0 à 1) qui rend un résultat pluie « calculé ailleurs »
   -- Adhérence sur piste mouillée : hypothèses H25 à H28, à confirmer en jeu (la physique pluie de CSP n'est
   -- pas documentée) ; les tours mouillés les calibrent (facteurs par composé, propres au mouillé, §9.2)

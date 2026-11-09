@@ -48,7 +48,9 @@ M.SCHEMAS = {
   -- mémoire du circuit (décision de Vincent du 21/10/2026) : setup validé d'une séance et d'un état de piste,
   -- désigné par son nom de fichier et l'empreinte de son contenu ; figé (cadenas) ou non
   mem = { file = { 'string' }, hash = HASH, version = { 'number', 0, 1000 }, gain = { 'number', -120, 120 },
-    time = { 'number', 0, 1e4 }, locked = FLAG, stamp = STAMP },
+    time = { 'number', 0, 1e4 }, locked = FLAG, stamp = STAMP,
+    -- vos temps réels avec ce setup (09/11/2026) : meilleur tour d'AC (tour rapide), moyenne et nombre de tours (course)
+    best = { 'number', 0, 1e4 }, mean = { 'number', 0, 1e4 }, laps = { 'number', 0, 1e5 } },
   -- versions de qualification validées (1.5.3, décision de Vincent du 02/11/2026 : la course part de l'une d'elles,
   -- d'un lancement d'AC à l'autre) ; clé : voiture, circuit, disposition, « qualif », empreinte du fichier
   ver = { file = { 'string' }, hash = HASH, version = { 'number', 0, 1000 }, stamp = STAMP },

@@ -165,15 +165,16 @@ end
 
 -- Valeur dans l'unité de setup.ini d'un cran CSP (avant facteur SI).
 local function setupUnits(member, value)
+  -- SHOW_CLICKS=2 : numéro de cran depuis MIN (setup.ini en dixièmes de degré pour le carrossage, test P03)
   if member.showClicks == 2 then value = member.iniMin + value * member.iniStep end
-  if member.kind == 'camber' then return value * (member.displayMultiplier or 0.1) end
+  if member.kind == 'camber' then return value * (member.displayMultiplier or K.camberTenth) end
   return value
 end
 
 -- Valeur physique (SI, degrés pour aileron et carrossage, psi pour la pression) d'un cran.
 local function physicalOf(member, value)
   if member.kind == 'gear' or member.kind == 'final' then
-    local entry = member.rto and member.rto[floor(value + 0.5) + 1]
+    local entry = member.rto and member.rto[floor(value - (member.min or 0) + 0.5) + 1]
     return entry and entry.ratio or nil
   end
   return setupUnits(member, value) * member.factor

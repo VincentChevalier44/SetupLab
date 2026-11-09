@@ -202,7 +202,38 @@ local function raceRunning()
   local okS, sim = Util.call(Util.get(host.ac, 'getSim'))
   return not (okS and sim ~= nil and Util.get(sim, 'isSessionStarted') == false)
 end
+-- Grille avant le départ (constat de Vincent du 09/11/2026 : « il me dit qu'il faut que je sois dans les stands » en
+-- reprenant sa course, ou en partant de sa qualif sur la grille d'un week-end) : séance de course, départ pas encore donné
+-- (séance lue non commencée ; illisible : pas de grille, par prudence). AC y laisse modifier le setup : le chargement y est
+-- permis comme au stand (D8 amendé), menu de setup ouvert et voiture arrêtée.
+local function raceGrid()
+  return raceIn() and not raceRunning()
+end
 app.raceSession, app.raceOver, app.raceIn, app.raceRunning = raceSession, raceOver, raceIn, raceRunning
+app.raceGrid = raceGrid
+
+-- État du stand pour le chargement, lu en une fois (la garde, l'affichage près de « Charger » et le journal d'un refus
+-- disent la même chose) : au stand, voie des stands, grille avant le départ (place : l'un ou l'autre), vitesse (km/h),
+-- voiture arrêtée, menu de setup ouvert, séance commencée.
+local function pitState()
+  local okC, car = Util.call(Util.get(host.ac, 'getCar'), 0)
+  local okS, sim = Util.call(Util.get(host.ac, 'getSim'))
+  local okE, editable = Util.call(Util.get(host.ac, 'isSetupAvailableToEdit'))
+  local hasCar = okC and car ~= nil
+  local speed = hasCar and Util.get(car, 'speedMs') or nil
+  local s = { car = hasCar, inPit = hasCar and Util.get(car, 'isInPit') == true,
+    pitlane = hasCar and Util.get(car, 'isInPitlane') == true, grid = hasCar and raceGrid(),
+    kmh = Util.isFinite(speed) and math.abs(speed) * 3.6 or nil, menu = okE and editable == true,
+    started = nil }
+  if okS and sim ~= nil then s.started = Util.get(sim, 'isSessionStarted') end
+  s.place = s.inPit or s.grid
+  s.stopped = s.kmh ~= nil and s.kmh <= K.loadMaxSpeedKmh
+  return s
+end
+-- Où se charge le setup, pour les messages : « sur la grille » avant le départ d'une course, sinon « au stand ».
+local function loadPlace()
+  return raceGrid() and 'sur la grille' or 'au stand'
+end
 
 -- Tours de la course de la séance en cours : ceux de la séance ; course au temps : estimés d'après sa durée et le temps
 -- au tour simulé du setup en place (tour supplémentaire compris) ; nil hors course ou sans donnée.
@@ -260,6 +291,7 @@ local function storeKey(kind, d, ...)
   if track == nil then track, layout = d.trackFiles.fullId, '-' end
   return Store.entryKey(kind, d.car.id, track, layout, ...)
 end
+app.storeKey = storeKey
 
 -- Chaque ligne gardée au journal est aussi recopiée dans le log de CSP (Documents\Assetto Corsa\logs\
 -- custom_shaders_patch.log, lignes « [Lua: App: SetupLab] »), au même débit et sur une seule ligne : ce qui s'est
@@ -274,12 +306,16 @@ end
 -- Mémoire du circuit (décision de Vincent du 21/10/2026) : setup validé par voiture, circuit, disposition,
 -- séance et état de piste ; figé (cadenas) ou non. Le fichier est désigné par son nom et l'empreinte de son
 -- contenu (le dossier se déduit de la voiture et du circuit).
+-- Champs d'une case de la mémoire gardés d'un lancement à l'autre (schéma « mem » de src/store.lua).
+local MEM_FIELDS = { 'file', 'hash', 'version', 'gain', 'time', 'locked', 'best', 'mean', 'laps' }
 local function memoryPut(m)
   app.memory[m.group .. '|' .. m.bucket] = m
   local key = storeKey('mem', app.discovery, m.group, m.bucket)
   if key == nil then return false end
-  return Store.put(app.store, key, { file = m.file, hash = m.hash, version = m.version, gain = m.gain, time = m.time,
-    locked = m.locked == true }, stamp())
+  local fields = {}
+  for _, name in ipairs(MEM_FIELDS) do fields[name] = m[name] end
+  fields.locked = m.locked == true
+  return Store.put(app.store, key, fields, stamp())
 end
 
 -- Versions de qualification validées de ce circuit, gardées d'un lancement d'AC à l'autre (1.5.3) : la course peut partir
@@ -352,7 +388,8 @@ end
 -- Signature du setup du jeu, lue au passage de la ligne seulement, et sa famille (sans les réglages changés
 -- en roulant, K.familyIgnored : vos temps par setup) ; nil si les crans sont illisibles.
 local function liveSignature()
-  local spinners = Datasource.readSpinners(host)
+  local d = app.discovery or app.lastDiscovery
+  local spinners = Datasource.readSpinners(host, nil, d and d.car and d.car.ini['setup.ini'], d and d.car and d.car.ratios)
   if spinners == nil or #spinners == 0 then return nil end
   local compound = liveCompound()
   return signatureOf(spinners, nil, compound), signatureOf(spinners, nil, compound, K.familyIgnored)
@@ -410,9 +447,7 @@ local function conditionsOf(d)
   -- jamais la consommation du modèle (§0.6, prudence : jamais de panne sèche)
   local fuelRate = rate(v.fuelConsumptionRate, assists.fuelRate)
   -- grip de la piste (relecture du 29/10/2026) : 0 donnait un tour de 6 h sans avertissement, 98 un tour trop rapide
-  local grip, gripIgnored = v.roadGrip, nil
-  if Util.isFinite(grip) and grip > 1.5 and grip <= 110 then grip = grip / 100 end
-  if Util.isFinite(grip) and (grip < 0.5 or grip > 1.1) then grip, gripIgnored = nil, v.roadGrip end
+  local grip, gripIgnored = Datasource.normalizeGrip(v.roadGrip)
   return { airTemp = v.ambientTemperature, roadTemp = v.roadTemperature, roadGrip = grip, roadGripIgnored = gripIgnored,
     surfaceGrip = d.trackModel and d.trackModel.surfaceGrip or 1,
     fuelRate = fuelRate and math.max(1, fuelRate) or nil, wearRate = rate(v.tyreConsumptionRate, assists.tyresWear) }
@@ -527,7 +562,7 @@ local function discover(ctx)
   ctx.tick()
   d.telemetry = Datasource.telemetryCheck(host, 0)
   ctx.tick()
-  d.setup = Datasource.readSetup(host, ctx)
+  d.setup = Datasource.readSetup(host, ctx, d.car.ini['setup.ini'], d.car.ratios)
   local compoundIndex = d.carState.ok and d.carState.values.compoundIndex or nil
   if not (Util.isFinite(compoundIndex) and compoundIndex >= 0 and compoundIndex == math.floor(compoundIndex)) then
     compoundIndex = nil
@@ -821,6 +856,7 @@ end
 -- Conditions d'un calcul : copie des conditions de la découverte, températures et adhérence de la piste
 -- relues au lancement (valeurs finies seulement). Chaque calcul garde sa propre copie : un calcul en
 -- cours ne change jamais de conditions (reproductibilité, §10.5).
+
 local function computeConditions(d)
   local out = {}
   for key, value in pairs(d.conditions or {}) do out[key] = value end
@@ -914,17 +950,37 @@ local function refreshContext()
   -- une piste au seuil ne bascule pas d'un mode à l'autre à chaque relecture) ; hors de la clé de séance
   local level = math.max(c.rainWetness or 0, c.rainWater or 0, c.rainIntensity or 0)
   local wet = app.wet
+  local want = nil
   if wet.state ~= 'pluie' and level >= K.wetEnter then
-    wet.state = 'pluie'
+    want = 'pluie'
+  elseif wet.state == 'pluie' and level <= K.wetExit then
+    want = 'sec'
+  end
+  -- bascule seulement si l'état tient K.wetHoldSeconds de suite (première relecture : l'état de la piste tel quel)
+  if want == nil then
+    wet.pending, wet.pendingSince = nil, nil
+  elseif wet.seen and K.wetHoldSeconds > 0 then
+    -- horloge revenue en arrière (séance recommencée) : le compte repart
+    if wet.pending ~= want or app.now < wet.pendingSince then wet.pending, wet.pendingSince = want, app.now end
+    if app.now - wet.pendingSince < K.wetHoldSeconds then want = nil end
+  end
+  wet.seen = true
+  if want == 'pluie' then
+    wet.state, wet.pending = 'pluie', nil
     log('INFO', 'wet', 'Piste mouillée : setups pluie (humidité ' .. Util.fmt((c.rainWetness or 0) * 100, 0) .. ' %, eau '
       .. Util.fmt((c.rainWater or 0) * 100, 0) .. ' %)')
-  elseif wet.state == 'pluie' and level <= K.wetExit then
-    wet.state = 'sec'
+  elseif want == 'sec' then
+    wet.state, wet.pending = 'sec', nil
     log('INFO', 'wet', 'Piste sèche : setups secs')
   end
   wet.wetness, wet.water, wet.intensity = c.rainWetness, c.rainWater, c.rainIntensity
   app.liveConditions = { airTemp = c.airTemp, roadTemp = c.roadTemp, roadGrip = c.roadGrip, bucket = wet.state,
     wetness = c.rainWetness, water = c.rainWater }
+  if c.key ~= app.contextKey and app.contextKey and wet.seen and want == nil and wet.pending then
+    -- autre voiture ou autre circuit : l'état de la piste se relit tel quel
+    wet.state = wet.pending
+    wet.pending, wet.pendingSince = nil, nil
+  end
   if c.key ~= app.contextKey then
     if app.contextKey then log('INFO', 'context', 'Voiture ou circuit changé : résultats périmés, nouvelle découverte') end
     app.contextKey = c.key
@@ -937,6 +993,7 @@ local function refreshContext()
     app.refines, app.manualKind = {}, nil
     app.loadCheck, app.loadTest, app.loadVerified = nil, nil, nil
     app.pitStrategy, app.qualiScan, app.inCar, app.lastDiscovery = nil, nil, nil, nil
+    app.acBestSeen, app.recSessionKey = nil, c.conditionsKey
     startDiscovery()
   elseif app.discoveryState == 'idle' then
     startDiscovery()
@@ -946,6 +1003,16 @@ local function refreshContext()
   -- nouvelle séance (type, numéro) : nouvelle découverte, une fois la séance confirmée par deux
   -- relectures du contexte (aucune relance en boucle sur une valeur qui oscille) ; séance illisible :
   -- rien (la dernière lue reste la référence)
+  -- vos meilleurs tours de la séance (relecture du 09/11/2026) : suivis à part de la découverte, qui peut prendre la clé de
+  -- la nouvelle séance avant sa confirmation
+  if c.conditionsKey and c.conditionsKey ~= app.recSessionKey then
+    if app.recSessionKey then
+      Recorder.newSession(app.recorder)
+      app.acBestSeen = nil
+      app.wet.pending, app.wet.pendingSince = nil, nil
+    end
+    app.recSessionKey = c.conditionsKey
+  end
   if app.conditionsKey == nil then app.conditionsKey = c.conditionsKey end
   if app.discoveryState ~= 'running' and c.conditionsKey and c.conditionsKey ~= app.conditionsKey then
     if app.pendingSessionKey == c.conditionsKey then
@@ -1234,11 +1301,77 @@ local function startMeasureOnly(lap)
   end)
 end
 
+-- Contrôle croisé avec le chrono d'AC (demande de Vincent du 09/11/2026 : « la télémétrie doit être parfaite ») : à chaque
+-- nouveau meilleur tour d'AC de la séance, une ligne du journal ; un avertissement si ce tour n'entre pas dans les temps
+-- d'AC de SetupLab (et pourquoi).
+local function acBestCheck(lap)
+  local okC, car = Util.call(Util.get(host.ac, 'getCar'), 0)
+  local ms = okC and car ~= nil and tonumber(Util.get(car, 'bestLapTimeMs')) or nil
+  if not (Util.isFinite(ms) and ms > 0) then
+    -- chrono d'AC remis à zéro (séance recommencée, même clé de séance) : vos meilleurs tours aussi
+    if app.acBestSeen and Util.isFinite(ms) then
+      Recorder.newSession(app.recorder)
+      app.acBestSeen = nil
+    end
+    return
+  end
+  local best = ms / 1000
+  if app.acBestSeen and math.abs(best - app.acBestSeen) < K.lapTimeEps then return end
+  -- chrono d'AC plus lent qu'avant : séance recommencée (même clé de séance) ; vos meilleurs tours repartent de zéro
+  if app.acBestSeen and best > app.acBestSeen then Recorder.newSession(app.recorder) end
+  app.acBestSeen = best
+  local same = Util.isFinite(lap.time) and math.abs(lap.time - best) < K.lapTimeEps
+  local known = nil
+  for _, f in pairs(app.recorder.laps.family) do
+    if Util.isFinite(f.acBest) and (known == nil or f.acBest < known) then known = f.acBest end
+  end
+  if same and not lap.acValid then
+    log('WARN', 'lap_time', 'Meilleur tour d\'AC ' .. Util.fmt(best, 3) .. ' s non compté dans vos temps ('
+      .. tostring(lap.reason or (lap.acInvalid and 'tour invalidé par AC') or '?') .. ')')
+  elseif not same and (known == nil or best < known - K.lapTimeEps) then
+    log('WARN', 'lap_time', 'Meilleur tour d\'AC ' .. Util.fmt(best, 3) .. ' s : tour non enregistré par SetupLab')
+  else
+    log('INFO', 'lap_time', 'Meilleur tour d\'AC de la séance : ' .. Util.fmt(best, 3) .. ' s')
+  end
+end
+
+-- Plus petit de deux temps finis (ou nil).
+local function minTime(a, b)
+  if not Util.isFinite(a) then return Util.isFinite(b) and b or nil end
+  if not Util.isFinite(b) then return a end
+  return math.min(a, b)
+end
+
+-- Vos temps réels dans la mémoire du circuit (09/11/2026 : elle montrait le tour simulé) : meilleur tour d'AC avec le setup
+-- d'une case (tour rapide), moyenne des tours analysés (course) ; même famille de setup et même état de piste.
+local function memoryLap(lap)
+  if lap.family == nil then return end
+  for _, m in pairs(app.memory) do
+    if m.family == lap.family and m.bucket == lap.bucket and m.problem == nil then
+      if m.group == 'course' then
+        if lap.valid then
+          local n = m.laps or 0
+          m.mean, m.laps = ((m.mean or 0) * n + lap.time) / (n + 1), n + 1
+          memoryPut(m)
+        end
+      elseif lap.acValid and (m.best == nil or lap.time < m.best - K.lapTimeEps) then
+        m.best = lap.time
+        memoryPut(m)
+      end
+    end
+  end
+end
+app.memoryLap = memoryLap
+
 local function onLap(lap)
   local raceOnly = lap.valid and (lap.traffic or lap.incident) and ('valide pour la course seulement ('
     .. tostring(lap.incident or 'trafic') .. ')') or nil
   log('INFO', 'lap', 'Tour enregistré : ' .. Util.fmt(lap.time, 3) .. ' s, ' .. (raceOnly or lap.valid and 'valide' or
-    ('rejeté (' .. tostring(lap.reason) .. ')')))
+    ('rejeté (' .. tostring(lap.reason) .. ')' .. (lap.acValid and ' ; compté dans vos temps d\'AC' or ''))))
+  acBestCheck(lap)
+  memoryLap(lap)
+  -- meilleur tour d'AC dans le nom des fichiers de qualification (renommés voiture arrêtée)
+  if app.queueBestRename then app.queueBestRename(lap) end
   if not lap.valid then
     -- tours rejetés pour trafic comptés (rapport J0, réglage des seuils)
     if lap.reason == Recorder.TRAFFIC_REASON then app.trafficRejects = (app.trafficRejects or 0) + 1 end
@@ -1256,8 +1389,6 @@ local function onLap(lap)
   -- pour la course ») : il compte pour l'affinage de la course seulement ; jamais pour la calibration, la rugosité, la
   -- validation ni le tour rapide
   local trafficLap = lap.traffic == true or lap.incident ~= nil
-  -- meilleur tour réel dans le nom des fichiers de qualification (renommés voiture arrêtée)
-  if app.queueBestRename and not trafficLap then app.queueBestRename(lap) end
   -- affinage : tours propres avec le même setup, comptés depuis la fin du dernier calcul ; version roulée
   local r = app.refine
   if r and r.active and not (trafficLap and r.kind ~= 'race') then
@@ -1324,6 +1455,7 @@ local function onLap(lap)
     end
   end
 end
+app.handleLap = onLap
 
 -- Enregistrement des tours : à chaque frame, lecture seule, très léger (§9.1).
 local function recordFrame()
@@ -1475,7 +1607,7 @@ local function qualiBlocker()
   if app.inert then return app.inert end
   if app.discoveryState == 'failed' then
     return 'découverte en échec (' .. tostring(app.discoveryError) .. ') : cliquer « Relancer la découverte » ; si l\'échec '
-      .. 'persiste, copier le rapport J0 (onglet Capacités)'
+      .. 'persiste, copier le rapport J0 (onglet DIAGNOSTIC)'
   end
   if app.discoveryState == 'running' then return 'découverte en cours' end
   if app.discoveryState ~= 'done' then return 'découverte en attente du contexte (voiture, circuit, séance)' end
@@ -1573,7 +1705,7 @@ app.raceReference, app.raceBlocker, app.raceQualiBase = raceReference, raceBlock
 
 -- Premier réglage dont le cran du jeu diffère de celui de l'espace (setup changé depuis la découverte).
 local function changedSetting(d)
-  local live = Datasource.readSetup(host, Util.syncContext())
+  local live = Datasource.readSetup(host, Util.syncContext(), d.car and d.car.ini['setup.ini'], d.car and d.car.ratios)
   local liveValues = {}
   for _, sp in ipairs(live.spinners) do liveValues[sp.name] = sp.value end
   for name, member in pairs(d.space.members) do
@@ -1741,8 +1873,26 @@ local function startCompute(kind, fromPending)
       end
     end
     if pins.TYRES and (settings.compoundChoice or -1) < 0 then
-      settings.compoundChoice = d.compoundIndex
+      settings.compoundChoice = Util.isFinite(pins.TYRES.value) and pins.TYRES.value or d.compoundIndex
       pinnedLabels[#pinnedLabels + 1] = 'composé de pneus'
+    end
+    -- qualification sur piste sèche : le plus tendre (règle de Vincent du 09/11/2026) ; un composé refusé ou imposé
+    -- dans les réglages passe avant
+    if kind == 'quali' and (settings.compoundChoice or -1) < 0 and conditions.bucket ~= 'pluie' then
+      local index, c = CarModel.softestCompound(d.carBase, d.compoundIndex)
+      if index then
+        settings.compoundChoice = index
+        q.qualiTyre = tostring(c.short or c.name)
+        log('INFO', 'quali_tyres', 'Pneus de qualification : ' .. tostring(c.name) .. ' (le plus tendre de la gamme)')
+      elseif app.qualiTyreNoted ~= d then
+        app.qualiTyreNoted = d
+        local names = {}
+        for _, cc in ipairs(d.carBase.compounds or {}) do
+          names[#names + 1] = tostring(cc.name) .. (cc.short and (' (' .. tostring(cc.short) .. ')') or '')
+        end
+        log('INFO', 'quali_tyres', 'Règle des pneus de qualification non appliquée (aucun pneu tendre reconnu) : '
+          .. table.concat(names, ', '))
+      end
     end
     q.pinned = pinnedLabels
     local args = {
@@ -1765,6 +1915,7 @@ local function startCompute(kind, fromPending)
     local result, why = spec.run(problem, ctx, q.opt)
     if result == nil then error(why, 0) end
     result.aids = aids
+    if q.qualiTyre and result.compound and result.compound.imposed then result.compound.rule = 'quali' end
     return result
   end, function(ok, result, cpuMs)
     if app[kind] ~= q then return end
@@ -1936,12 +2087,14 @@ local function loadBlocker(kind)
   if not (saved and saved.text and saved.signature == app.proposals[kind]) then
     return 'enregistrer d\'abord le setup ' .. COMPUTE[kind].label
   end
-  local okC, car = Util.call(Util.get(host.ac, 'getCar'), 0)
-  if not okC or Util.get(car, 'isInPit') ~= true then return 'voiture hors du stand' end
-  local speed = Util.get(car, 'speedMs')
-  if not Util.isFinite(speed) or math.abs(speed) * 3.6 > K.loadMaxSpeedKmh then return 'voiture en mouvement' end
-  local okE, editable = Util.call(Util.get(host.ac, 'isSetupAvailableToEdit'))
-  if not (okE and editable == true) then return 'setup non modifiable maintenant : ouvrir le menu de setup au stand' end
+  -- au stand, ou sur la grille avant le départ d'une course (09/11/2026)
+  local ps = pitState()
+  if not (ps.car and ps.place) then return 'voiture hors du stand' end
+  if not ps.stopped then return 'voiture en mouvement' end
+  if not ps.menu then
+    return ps.grid and 'setup non modifiable maintenant : ouvrir le menu de setup sur la grille, avant le départ'
+      or 'setup non modifiable maintenant : ouvrir le menu de setup au stand'
+  end
   -- setup imposé : refus aussi quand l'état est illisible
   if Util.get(sim, 'fixedSetup') ~= false then return 'setup imposé par la session (ou état illisible)' end
   local okI, carId = Util.call(Util.get(host.ac, 'getCarID'), 0)
@@ -1985,9 +2138,7 @@ local function writtenKey()
 end
 
 local function carStopped()
-  local okC, car = Util.call(Util.get(host.ac, 'getCar'), 0)
-  local speed = okC and Util.get(car, 'speedMs') or nil
-  return Util.isFinite(speed) and math.abs(speed) * 3.6 <= K.loadMaxSpeedKmh
+  return pitState().stopped
 end
 
 -- Setups de qualification de SetupLab du dossier de la voiture et du circuit (v1, v2, v3…, essais et noms avec meilleur
@@ -2257,15 +2408,17 @@ end
 
 -- Meilleur tour réel dans le nom des fichiers gardés de tour rapide de la même famille de setup et du même état
 -- de piste, quand il bat le temps déjà dans le nom (renommés voiture arrêtée).
+-- Temps d'AC (09/11/2026) : le meilleur tour compté par AC avec ce setup, comme « votre meilleur » à l'écran.
 local function queueBestRename(lap)
-  if not (lap and lap.valid and lap.family) then return end
+  if not (lap and lap.acValid and lap.family) then return end
   local f = app.recorder.laps.family[Recorder.bestKey(lap.family, lap.bucket)]
-  if not (f and Util.isFinite(f.best) and f.best > 0) then return end
+  local best = f and minTime(f.acBest, f.best)
+  if not (Util.isFinite(best) and best > 0) then return end
   for _, k in ipairs(keptFiles('quali')) do
     if k.family == lap.family and (k.bucket or 'sec') == lap.bucket then
       local named = Util.lapFromFileName(k.name)
-      if named == nil or f.best < named - 0.0005 then
-        queueFileOp({ op = 'nom', name = k.name, hash = k.hash, time = f.best })
+      if named == nil or best < named - K.lapTimeEps then
+        queueFileOp({ op = 'nom', name = k.name, hash = k.hash, time = best })
       end
     end
   end
@@ -2397,8 +2550,11 @@ local function refreshMemory()
       local key = storeKey('mem', d, g.key, bucket)
       local e = key and Store.get(app.store, key, stamp())
       if e and e.file and e.hash then
-        local m = { group = g.key, bucket = bucket, file = e.file, hash = e.hash, version = e.version, gain = e.gain,
-          time = e.time, locked = e.locked == true, carId = d.car and d.car.id }
+        local m = { group = g.key, bucket = bucket, carId = d.car and d.car.id }
+        for _, name in ipairs(MEM_FIELDS) do m[name] = e[name] end
+        m.locked = e.locked == true
+        -- validé avant la 1.5.9 (sans « best ») : le temps du nom du fichier, écrit par SetupLab depuis un de vos tours
+        if m.best == nil and g.key ~= 'course' then m.best = Util.lapFromFileName(e.file) end
         local path = folder and (folder .. '/' .. e.file)
         local cached = path and app.memoryFiles[path]
         local ok, text = false, nil
@@ -2500,6 +2656,11 @@ local function requestLoad(kind, where)
     app.ui.message = 'Chargement impossible : ' .. why .. '.'
     -- dit aussi sous le bouton (constat de Vincent du 22/10/2026 : le message du haut n'est pas vu)
     app.loadNote = { kind = kind, text = app.ui.message }
+    -- état lu au refus, dans le journal (09/11/2026 : chargement sur la grille, à confirmer en jeu)
+    local ps = pitState()
+    log('INFO', 'load_refused', app.ui.message .. ' État : au stand ' .. tostring(ps.inPit) .. ', voie des stands '
+      .. tostring(ps.pitlane) .. ', menu de setup ' .. tostring(ps.menu) .. ', séance commencée ' .. tostring(ps.started)
+      .. ', séance de course ' .. tostring(raceSession()) .. ', vitesse ' .. (ps.kmh and Util.fmt(ps.kmh, 1) or '?') .. ' km/h')
     return
   end
   -- double clic : le même fichier redemandé aussitôt ne recharge rien (le constat peut finir en une image)
@@ -2647,11 +2808,8 @@ local function loadReadiness()
     app.loadReady = nil
     return
   end
-  local okC, car = Util.call(Util.get(host.ac, 'getCar'), 0)
-  local speed = okC and Util.get(car, 'speedMs') or nil
-  local okE, editable = Util.call(Util.get(host.ac, 'isSetupAvailableToEdit'))
-  app.loadReady = { pit = okC and Util.get(car, 'isInPit') == true,
-    stopped = Util.isFinite(speed) and math.abs(speed) * 3.6 <= K.loadMaxSpeedKmh, menu = okE and editable == true }
+  local ps = pitState()
+  app.loadReady = { pit = ps.place, grid = ps.grid, stopped = ps.stopped, menu = ps.menu }
 end
 
 -- Stratégie d'arrêt posée après un chargement de course : ce qui a changé, dit au pilote, une phrase par constat
@@ -2893,9 +3051,8 @@ end
 local function readyNow()
   if raceRunning() then return false end
   if raceSession() and raceOver() then return true end
-  return carAtPit()
+  return carAtPit() or raceGrid()
 end
-app.readyNow = readyNow
 
 -- Annonce à l'écran (messages d'AC en haut de l'écran) : version prête, au stand.
 local function refineAnnounce(r, e)
@@ -2935,7 +3092,7 @@ local function refinePreparing(r, e)
   e.noticed = true
   local title = 'SetupLab : setup ' .. COMPUTE[r.kind].label .. ' v' .. e.version .. ' en préparation'
   local text = 'J\'ai le minimum d\'informations ; je continue d\'analyser vos tours. Le setup sera prêt à votre retour au stand.'
-  if raceIn() then
+  if raceRunning() then
     text = 'J\'ai le minimum d\'informations ; je continue d\'analyser vos tours de course. Le setup vous sera proposé à '
       .. 'l\'arrivée, pour votre prochaine course.'
   end
@@ -3000,7 +3157,6 @@ local function raceComputeWait(r)
   if not raceRunning() and raceQualiBase() == nil then return nil end
   return 'analyse de vos tours de course : le setup sera calculé à l\'arrivée'
 end
-app.raceComputeWait = raceComputeWait
 
 -- Effets d'une version (décision de Vincent du 26/10/2026) : ses réglages changés regroupés (Config.effectGroups),
 -- chacun gardé par défaut ; un groupe déjà trié garde son choix quand la version est mise à jour.
@@ -3487,7 +3643,10 @@ local function refineStart(kind)
   -- tours propres déjà roulés avec le setup en cours (avant d'activer l'affinage) : ils comptent pour le minimum
   local d = app.discovery
   local f = d and d.family and app.recorder.laps.family[Recorder.bestKey(d.family, app.wet.state)]
-  if f then r.minFamily, r.minLaps, r.minTime = d.family, f.count, f.sum end
+  if f then
+    local n = kind == 'race' and f.count or (f.count - (f.traffic or 0) - (f.incident or 0))
+    r.minFamily, r.minLaps, r.minTime = d.family, math.max(0, n), f.sum
+  end
   log('INFO', 'refine', 'Affinage ' .. COMPUTE[kind].label .. ' lancé')
   local why = kind == 'race' and raceBlocker() or nil
   local wait = raceComputeWait(r)
@@ -3606,6 +3765,18 @@ local function refineValidate(r, e)
   local entry = { group = e.group, bucket = e.bucket, file = e.file, hash = e.hash, version = e.version, gain = e.gain,
     time = e.timeProposed, locked = same and m.locked or false, path = e.path, text = e.text, signature = e.signature,
     origin = e.origin, carId = e.carId, family = e.family }
+  -- vos temps réels avec elle (09/11/2026) : même setup déjà en mémoire, les siens (les tours de ce lancement y sont déjà) ;
+  -- sinon, les tours de ce lancement avec ce setup
+  if same then
+    entry.best, entry.mean, entry.laps = m.best, m.mean, m.laps
+  else
+    local f = e.family and app.recorder.laps.family[Recorder.bestKey(e.family, e.bucket)]
+    if f and e.group == 'course' and (f.count or 0) > 0 then
+      entry.mean, entry.laps = f.sum / f.count, f.count
+    elseif f and e.group ~= 'course' then
+      entry.best = minTime(f.acBest, f.best)
+    end
+  end
   memoryPut(entry)
   queueBackupCleanup()
   -- 1.5.3 (décisions de Vincent du 02/11/2026) : « Valider » met toujours la version gardée dans la voiture (après l'essai
@@ -3613,7 +3784,7 @@ local function refineValidate(r, e)
   local okL, liveText = Util.call(Util.get(host.ac, 'stringifyCurrentSetup'), true, false)
   local live = okL and type(liveText) == 'string' and setupValues(liveText) or nil
   local keptValues = setupValues(e.text)
-  local same = live ~= nil and sameSetup(live, keptValues)
+  local inCarSame = live ~= nil and sameSetup(live, keptValues)
   -- répartition de freinage et niveaux d'aide, hors de sameSetup : comparés au setup que SetupLab a mis dans la voiture
   -- (version dans la voiture ; les aides du jeu peuvent remplacer les niveaux lus), sinon à la voiture ; une répartition
   -- changée en roulant n'est pas une raison de recharger
@@ -3622,12 +3793,12 @@ local function refineValidate(r, e)
   local ref = inCar and loadedRec and loadedRec.values or live
   for _, name in ipairs({ 'FRONT_BIAS', 'ABS', 'TRACTION_CONTROL' }) do
     local want, has = keptValues[name], ref and ref[name]
-    if same and want ~= nil and has ~= nil and want ~= has
+    if inCarSame and want ~= nil and has ~= nil and want ~= has
         and (name ~= 'FRONT_BIAS' or not inCar or (live and live.FRONT_BIAS == has)) then
-      same = false
+      inCarSame = false
     end
   end
-  local loadIt = not same
+  local loadIt = not inCarSame
   local validated = 'v' .. e.version .. ' validée et enregistrée : ' .. e.file .. ' ; setup de référence ('
     .. memoryTitle(entry) .. ') gardé en mémoire pour ce circuit. '
   if loadIt and raceRunning() then
@@ -3642,11 +3813,12 @@ local function refineValidate(r, e)
     -- « Charger »
     requestLoad(r.kind)
     if app.loadCheck == nil then
-      app.ui.message = validated .. 'Au stand, menu de setup ouvert : « Charger » pour la mettre dans la voiture ; l\'affinage '
-        .. 'repartira d\'elle.'
+      app.ui.message = validated .. (raceGrid() and 'Sur la grille avant le départ' or 'Au stand') .. ', menu de setup '
+        .. 'ouvert : « Charger » pour la mettre dans la voiture ; l\'affinage repartira d\'elle.'
     end
     local requested = app.loadCheck ~= nil and app.saved[r.kind] ~= nil and app.loadCheck.path == app.saved[r.kind].path
-    log('INFO', 'memory', validated .. (requested and 'Elle va dans la voiture.' or 'Chargement refusé : « Charger » au stand.'))
+    log('INFO', 'memory', validated .. (requested and 'Elle va dans la voiture.'
+      or (app.loadNote and app.loadNote.text or 'Chargement refusé.')))
   else
     app.ui.message = validated .. 'Elle est dans la voiture : l\'affinage repart d\'elle.'
     log('INFO', 'memory', app.ui.message)
@@ -3990,8 +4162,8 @@ local function startChoose(kind, mode)
       signature = signatureOf(d.setup.spinners, values, d.compoundIndex), carId = d.car and d.car.id }
     setLoadTarget(kind, rec)
     app.start[kind] = { mode = 'default', signature = rec.signature, file = w.name, ready = rec.signature == d.signature }
-    app.ui.message = 'Départ : setup par défaut de la voiture, écrit dans ' .. w.name .. ' ; il va dans la voiture (au stand, '
-      .. 'menu de setup ouvert) et l\'affinage ' .. label .. ' partira de lui.'
+    app.ui.message = 'Départ : setup par défaut de la voiture, écrit dans ' .. w.name .. ' ; il va dans la voiture ('
+      .. loadPlace() .. ', menu de setup ouvert) et l\'affinage ' .. label .. ' partira de lui.'
   elseif mode == 'reference' then
     local m = app.memory[memoryGroup(kind) .. '|' .. app.wet.state]
     if not (m and m.text) and kind ~= 'race' then m = app.memory['essai|' .. app.wet.state] end
@@ -4002,7 +4174,7 @@ local function startChoose(kind, mode)
     setLoadTarget(kind, m)
     app.start[kind] = { mode = 'reference', signature = m.signature, file = m.file, ready = m.signature == d.signature }
     app.ui.message = 'Départ : votre référence ' .. m.file .. (app.start[kind].ready and ', déjà dans la voiture.'
-      or ' ; elle va dans la voiture (au stand, menu de setup ouvert) et l\'affinage partira d\'elle.')
+      or (' ; elle va dans la voiture (' .. loadPlace() .. ', menu de setup ouvert) et l\'affinage partira d\'elle.'))
   else
     app.start[kind] = { mode = 'mine', ready = true }
     app.saved[kind] = nil
@@ -4119,6 +4291,8 @@ local function handleIntents(intents)
       intents.refineStart = 'race'
     end
   end
+  -- « Calculer le setup course » (intention générique raceStart) pendant l'affinage du tour rapide : la course devient
+  -- l'affinage en cours
   if intents.raceStart and app.refine and app.refine.active and app.refine.kind ~= 'race' then
     intents.raceStart, intents.refineStart = nil, 'race'
   end

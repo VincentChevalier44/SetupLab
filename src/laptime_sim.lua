@@ -20,13 +20,14 @@
 -- Circuit fermé : les passes partent du minimum global de v_lim (raccord de fin de tour exact).
 -- Les tampons sont réutilisés d'une évaluation à l'autre (aucune allocation par point).
 
+local Util = require('src/util')
 local Config = require('src/config')
 local K = Config.K
 
 local M = {}
 
 local floor, sqrt, abs, min, max, cos, sin = math.floor, math.sqrt, math.abs, math.min, math.max, math.cos, math.sin
-local G = 9.80665
+local G = Util.G
 
 -- Codes du facteur limitant, par point.
 M.LIMIT = { corner = 1, brake = 2, traction = 3, power = 4, shift = 5 }
@@ -314,8 +315,7 @@ function M.run(track, eff, buf, opts)
   -- Profil final, temps, facteurs limitants, indicateurs.
   local time, fuel, rearFirstDist, brakeDist, drsTime = 0, 0, 0, 0, 0
   local balanceSum, balanceAbs, cornerTime = 0, 0, 0
-  local shifts, vMax = 0, 0
-  local gearFinal = bestGear(eff, v[1] or 0)
+  local vMax = 0
   local target = math.log(K.balanceTarget)
   for k = 1, N do
     local value = min(vf[k], vb[k])
@@ -356,9 +356,6 @@ function M.run(track, eff, buf, opts)
     -- volet ouvert : décidé en accélération, refermé au freinage
     if drsOpen[k] == 1 and code == M.LIMIT.brake then drsOpen[k] = 0 end
     if drsOpen[k] == 1 then drsTime = drsTime + dt end
-    local up
-    gearFinal, up = nextGear(eff, gearFinal, speed)
-    if up then shifts = shifts + 1 end
     -- Carburant (formule Kunos) : gaz plein en accélération, d'entretien en virage, nul au freinage.
     if eff.consumption then
       local throttle = 0
@@ -376,7 +373,7 @@ function M.run(track, eff, buf, opts)
     drsOpen[N] = 0
   end
   return {
-    time = time, vMax = vMax, vMin = vMin, kMin = kMin, vTop = vTop, shifts = shifts,
+    time = time, vMax = vMax, vMin = vMin, kMin = kMin, vTop = vTop,
     drs = drs, drsTime = drsTime, vTopOpen = drs and vTopOpen or nil,
     fuel = eff.consumption and fuel or nil,
     balanceMean = cornerTime > 0 and math.exp(balanceSum / cornerTime + target) or 1,

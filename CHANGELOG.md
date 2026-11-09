@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.0.0-beta.1.5.9 — 2026-11-09 — beta 1.5.9: load on the grid, AC's lap times, qualifying tyres, CSP 0.2.11 car data
+
+Why this update: in a race you could not load your race setup on the grid ("car not in the pits"); the times shown did not match AC's information tab, and the track memory showed a simulated time as your best; a qualifying setup could keep hard tyres; with the free CSP 0.2.11 some cars gave "Computation unavailable, car model incomplete" ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)). From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).
+
+Loading on the grid:
+
+- **In a race session, before the start, a setup loads on the grid** as in the pits (car stopped, setup menu open): "Resume my race vN", "Start from qualifying vN", "Try" the race v1. The pit state next to "Load" says "on the grid", and the header shows "ON THE GRID". Once the race has started, nothing is loaded before the finish, as before.
+- A version computed on the grid before the start is announced as ready (it can be tried there).
+- Each refused load writes the state read (pits, pit lane, setup menu, session started, speed) to the log.
+
+Your lap times, the same as AC's:
+
+- **"Your best" is your best lap of the session with that setup, as AC's timing counts it**: a lap SetupLab leaves out of its analysis (traffic, wheel lock-up, slide, small impact, brake bias touched while driving) still counts, as in AC's information tab. When the clean lap used by the analysis differs, it is shown next to it ("clean 1:27.305"). A new session starts from zero, like AC's timing. The calibration and the clean-lap minimum still use clean laps only.
+- A lap through the pit lane, reset to the track, with a coverage gap or with a setup change during the lap never counts, even after a first reason such as traffic.
+- **Track memory shows your real times**: the best lap (or the average lap for the race) with each validated setup, over all sessions, updated lap after lap. Before your first lap with it, the simulated time is shown in grey as "simulated time · no lap measured" (it was shown as "your best"). A setup validated before 1.5.9 takes the time already in its file name.
+- The best lap added to a qualifying file name is the same AC time.
+- The MEASURE page shows the same best lap of the session.
+- The log compares every new AC best lap with SetupLab's times and warns when one is not counted, with the reason.
+- The last lap left out of the analysis but counted by AC says so ("left out of the analysis (traffic) · counted by AC timing").
+
+Qualifying tyres:
+
+- **On a dry track, a qualifying setup uses the softest compound of the mounted range**: hypersoft, ultrasoft, supersoft, then soft, recognised by name (English or French, e.g. "Super tendre") or short name (HS, US, SS, S), within the same range (for example "Grip Formule 3 - …"). A compound refused with "Modify…" or imposed in the settings comes first. The result says "qualifying rule: the softest"; when no soft compound is recognised, the log lists the compounds.
+- A refused compound is kept at the compound you chose to keep, not at the one in the car.
+
+Rain:
+
+- **The track switches between dry and wet only after the new state has lasted 20 seconds** (CSP's water reading could jump from 19 % to 39 % and back to nothing within 90 seconds, flipping the setups four times). At launch, and on a new car or track, the state read is taken at once.
+
+Free CSP 0.2.11 ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)):
+
+- When CSP gives empty car files, SetupLab reads their raw text (packed `data.acd` included).
+- When it gives no setup settings, SetupLab deduces them from the car's `setup.ini` and the current setup, in AC's setup-file encoding. The J0 report says so, and the settings/file consistency is shown as "not verifiable" (settings locked by a series and the car's default setup are not known in that mode).
+- Lists returned by CSP in another form than a Lua table are accepted, and the report gives the type received otherwise.
+
+Review and clean-up:
+
+- Race computation: tyre compounds are now compared at the measured tyre temperature, as in qualifying (the race comparison used the curve plateau).
+- Car model: ballast was counted twice when the car mass came from CSP; the top speed uses the same force curve for its bracket and its bisection; one brake bias range for the file and the setup.
+- Setup steps: camber with SHOW_CLICKS=2 converted correctly; gear ratio lists read from the step minimum.
+- ERS: the optimised race plan is evaluated in steady state, like the car's own strategies; ERS profiles are read in a fixed order.
+- Optimiser: the robustness reserve is sized for the whole group, and the current setup no longer spends evaluations on a loss that is zero by definition. Unused gear-shift counting removed from the lap simulation (faster evaluations).
+- The "Performance / Stability" help text now matches the computation (towards 1: fastest; towards 0: more stable).
+- English interface: the "Your times" line and the qualifying tyre rule are translated again; gains have the same sign everywhere (negative: faster).
+- Track grip read from CSP is normalised in one place; one gravity constant; lap-time tolerance, tyre vocabulary, brake bias range and other values moved to the configuration.
+- The list of CSP functions in the J0 report matches the functions SetupLab really calls. The issue template asks for the CSP version.
+- The archive now contains the `LICENSE` file.
+- Offline test bench: 429 tests, 20 counter-checks (each fix undone in turn must fail a test).
+
 ## 1.0.0-beta.1.5.8 — 2026-11-05 — beta 1.5.8: repository renamed SetupLab
 
 Why this update: the GitHub repository is now named **SetupLab** (it was ACSetupLab). SetupLab now uses the new addresses directly, without going through GitHub's redirects. Nothing else changes. From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).

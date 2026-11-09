@@ -49,9 +49,13 @@ local function waitFor(h, predicate, profile, maxFrames)
   return nil
 end
 
+-- Deux relectures du contexte séparées de plus de K.wetHoldSeconds : l'état lu tient assez longtemps pour basculer.
 local function refresh(h, app)
-  app.nextContextAt = 0
-  frames(h, 1)
+  for _ = 1, 2 do
+    h.sim.time = h.sim.time + (Config.K.wetHoldSeconds + 1) * 1000
+    app.nextContextAt = 0
+    frames(h, 1)
+  end
 end
 
 local function shown(h, fragment)
@@ -100,6 +104,44 @@ tests['PL01 état de la piste : « pluie » dès 0,15, « sec » sous 0,05 seule
   refresh(h, app)
   T.eq(app.wet.state, 'pluie', 'eau sur la piste')
   T.eq(app.perf.errors, 0)
+end
+
+-- Choix de Vincent du 09/11/2026 (« le plus réel ») : l'eau lue par CSP doit tenir K.wetHoldSeconds de suite pour changer
+-- l'état de la piste (journal du 06/11 : 19 %, puis 39 %, puis rien en 90 s, quatre bascules) ; au lancement, tel quel.
+tests["PL01b bascule sec/pluie : l'état doit tenir 20 s de suite ; une pointe d'eau ne bascule pas"] = function()
+  local h, app = boot()
+  T.ok(waitFor(h, function() return app.discoveryState == 'done' end))
+  local function read(seconds)
+    h.sim.time = h.sim.time + seconds * 1000
+    app.nextContextAt = 0
+    frames(h, 1)
+  end
+  rain(h, 0, 0.39)
+  read(1)
+  read(Config.K.wetHoldSeconds - 5)
+  T.eq(app.wet.state, 'sec', 'eau depuis moins de 20 s : sec')
+  rain(h, 0, 0)
+  read(1)
+  rain(h, 0, 0.39)
+  read(1)
+  read(Config.K.wetHoldSeconds - 5)
+  T.eq(app.wet.state, 'sec', 'pointe interrompue : le compte repart')
+  read(6)
+  T.eq(app.wet.state, 'pluie', 'eau tenue 20 s : pluie')
+  rain(h, 0, 0.01)
+  read(1)
+  T.eq(app.wet.state, 'pluie', 'séchée depuis 1 s : encore pluie')
+  read(Config.K.wetHoldSeconds + 1)
+  T.eq(app.wet.state, 'sec')
+  -- au lancement, piste déjà mouillée : tout de suite
+  local h2 = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  h2.sim.rainWetness = 0.6
+  Fake.install(h2)
+  assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+  local app2 = rawget(_G, 'SETUPLAB').app
+  frames(h2, 2)
+  T.eq(app2.wet.state, 'pluie', 'première relecture : tel quel')
+  T.eq(app.perf.errors + app2.perf.errors, 0)
 end
 
 tests['PL02 tours rangés par état de piste : calibration pluie sur les seuls tours mouillés, eau mesurée, fichier « Pluie »'] = function()

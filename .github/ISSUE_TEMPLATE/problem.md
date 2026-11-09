@@ -4,6 +4,8 @@ about: A button that does nothing, a refused computation, a strange setup, an er
 labels: bug
 ---
 
+**CSP version** (Content Manager, Settings, Custom Shaders Patch, About; for example 0.2.11 or 0.3.2-preview2):
+
 **SetupLab version** (header, hover over the title):
 
 **Car and track**:

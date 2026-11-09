@@ -70,7 +70,7 @@ EN = {
         'Valid lap with a setup the app does not know: run the discovery again to use it.',
     "Test d'écriture réussi : %s": 'Write test passed: %s',
     'Copie du setup enregistrée : %s (%s octets, relue et identique).': 'Setup copy saved: %s (%s bytes, read back and identical).',
-    "découverte en échec (%s) : cliquer « Relancer la découverte » ; si l'échec persiste, copier le rapport J0 (onglet Capacités)":
+    "découverte en échec (%s) : cliquer « Relancer la découverte » ; si l'échec persiste, copier le rapport J0 (onglet DIAGNOSTIC)":
         'discovery failed (%s): click "Run discovery again"; if it keeps failing, copy the J0 report (DIAGNOSTICS tab)',
     'découverte en cours': 'discovery in progress',
     'découverte en attente du contexte (voiture, circuit, séance)': 'discovery waiting for the context (car, track, session)',

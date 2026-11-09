@@ -208,7 +208,7 @@ tests['J03 fichier modifié, absent ou étranger ; copie de sauvegarde impossibl
   local host = { ac = h.ac, io = h.io }
   local folder = assert(Exporter.targetFolder(host))
   local name = path:sub(#folder + 2)
-  local prefix = Config.exportQualiPrefix
+  local prefix = (Config.fileDefaultName .. '_' .. Config.fileGenre.quali .. '_')
   local written = { [name] = Util.hashString(text) }
   for _, bad in ipairs({ folder .. '/../autre/' .. name, folder .. '/sous/' .. name, folder .. '/autre.ini',
       folder .. '/' .. Config.exportBackupPrefix .. '1.ini', '/ailleurs/' .. name, folder .. '/' .. name .. '.txt',

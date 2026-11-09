@@ -6,7 +6,7 @@
 -- robust(x) -> pénalité (s), évaluations consommées : facultatif, appliqué aux meilleurs candidats
 -- seulement (§10.2, P_robustesse) ; reserve : évaluations gardées pour la robustesse et la sensibilité.
 --
--- 1. Point de départ : setup actuel (x = 0) et départs supplémentaires (heuristiques §10.1).
+-- 1. Point de départ : setup actuel (x = 0).
 -- 2. Recherche grossière : suite de Halton à rotation aléatoire (Cranley–Patterson) sur la grille.
 -- 3. Raffinement : descente de coordonnées à pas décroissants depuis les meilleurs points (toutes les
 --    variables d'un setup AC sont discrètes : la phase Nelder–Mead « sur les variables continues » du
@@ -75,7 +75,7 @@ function M.run(problem, ctx, state)
   local rng = Util.rngNew(problem.seed or 1)
   local memo, coarseMemo = {}, {}
   local evaluated = {}
-  local tie = problem.tieSeconds or 0.02
+  local tie = problem.tieSeconds or K.optTieSeconds
   local limit = max(1, budget - (problem.reserve or 0))
 
   -- La réserve n'est entamée qu'après la recherche (sélection robuste et sensibilité). Le budget est
@@ -123,18 +123,12 @@ function M.run(problem, ctx, state)
   for d = 1, n do zero[d] = 0 end
   state.currentJ = fine(zero, true)
   local starts = { { x = zero, J = state.currentJ } }
-  for _, extra in ipairs(problem.starts or {}) do
-    local x = {}
-    for d = 1, n do x[d] = Util.clamp(floor((extra[d] or 0) + 0.5), dims[d].lo, dims[d].hi) end
-    local J = fine(x)
-    if J then starts[#starts + 1] = { x = x, J = J } end
-  end
 
   -- 2. Recherche grossière (Halton à rotation aléatoire, dimension par dimension)
   state.phase = 'recherche grossière'
   local shift = {}
   for d = 1, n do shift[d] = Util.rngNext(rng) end
-  local coarseCount = n > 0 and floor(limit * (problem.coarseFraction or 0.4)) or 0
+  local coarseCount = n > 0 and floor(limit * (problem.coarseFraction or K.optCoarseFraction)) or 0
   local candidates = {}
   for i = 1, coarseCount do
     if exhausted() then break end
@@ -156,7 +150,7 @@ function M.run(problem, ctx, state)
   local seen = {}
   for _, s in ipairs(seeds) do seen[keyOf(s, n)] = true end
   for _, c in ipairs(candidates) do
-    if #seeds >= (problem.topK or 4) + #starts then break end
+    if #seeds >= (problem.topK or K.optTopK) + #starts then break end
     local key = keyOf(c.x, n)
     if not seen[key] then
       seen[key] = true
@@ -171,7 +165,7 @@ function M.run(problem, ctx, state)
     local x = copy(seed, n)
     local J = fine(x)
     if J == nil then break end
-    for _, step in ipairs(problem.steps or { 4, 2, 1 }) do
+    for _, step in ipairs(problem.steps or K.optSteps) do
       local improved = true
       while improved and not exhausted() do
         improved = false
@@ -218,7 +212,7 @@ function M.run(problem, ctx, state)
     local group, inGroup = {}, {}
     local function addGroup(e)
       local key = keyOf(e.x, n)
-      if e and not inGroup[key] then
+      if not inGroup[key] then
         inGroup[key] = true
         group[#group + 1] = e
       end
@@ -228,7 +222,7 @@ function M.run(problem, ctx, state)
     end
     local distinct = 0
     for _, o in ipairs(optima) do
-      if distinct >= (problem.robustCount or 3) then break end
+      if distinct >= (problem.robustCount or K.optRobustCount) then break end
       if not inGroup[keyOf(o.x, n)] then
         addGroup(o)
         distinct = distinct + 1
@@ -685,7 +679,7 @@ end
 
 -- Réserve (robustesse, sensibilité) d'un budget, plafonnée : un petit budget doit d'abord servir à chercher.
 local function reserveOf(budget, n, p)
-  return min(3 * n + (K.optRobustCount + 2) * (#p.perturbed + 1) + 2, floor(budget * K.optReserveFraction))
+  return min(3 * n + (K.optRobustCount + 3) * (#p.perturbed + 1) + 2, floor(budget * K.optReserveFraction))
 end
 
 -- Copie d'un setup physique (le plan ERS ne doit pas voir les écarts essayés ensuite).
@@ -815,6 +809,8 @@ function M.runQuali(p, ctx, state)
       return out
     end
     if robustBase == nil then robustBase = losses(zero) end
+    -- setup actuel : aucune perte au-delà de la sienne, par définition
+    if x == zero then return 0, used end
     local mine = losses(x)
     local worst = 0
     for i = 1, #mine do worst = max(worst, mine[i] - robustBase[i]) end
@@ -1107,7 +1103,12 @@ function M.runRace(p, ctx, state)
   -- choix reposerait sur un taux d'usure supposé, §0.6)
   state.phase = 'composés'
   local lock = info.kmSource ~= 'mesure' and 'usure non mesurée : composé monté conservé (comparatif indicatif)' or nil
-  p.compound = chooseCompound(p, function(slot) return (exactJ(zero, slot, p.factors)) end, lock)
+  p.compound = chooseCompound(p, function(slot)
+    -- l'évaluateur garde sa copie des conditions : la température mesurée posée par chooseCompound y est recopiée
+    ev.conditions.tyreTempF, ev.conditions.tyreTempR = p.conditions.tyreTempF, p.conditions.tyreTempR
+    return (exactJ(zero, slot, p.factors))
+  end, lock)
+  ev.conditions.tyreTempF, ev.conditions.tyreTempR = p.conditions.tyreTempF, p.conditions.tyreTempR
   M.tyreBounds(p)
   local common = p.compound.common
   for _, e in ipairs({ ev, evCoarse }) do
@@ -1142,6 +1143,8 @@ function M.runRace(p, ctx, state)
       return out
     end
     if robustBase == nil then robustBase = losses(zero) end
+    -- setup actuel : aucune perte au-delà de la sienne, par définition
+    if x == zero then return 0, used end
     local mine = losses(x)
     local worst = 0
     for i = 1, #mine do worst = max(worst, mine[i] - robustBase[i]) end

@@ -89,6 +89,7 @@ tests['LR04 aides seules refusées : rechargement à la validation'] = function(
   app.handleIntents({ rediscover = true })
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end))
   h.sim.rainWetness, h.sim.rainWater = 1, 0.6
+  Fake.settleConditions(h, app)
   app.nextContextAt = 0
   frames(h, 2)
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end))
@@ -237,6 +238,7 @@ tests['LR08 aides refusées : reproposées au calcul suivant'] = function()
   app.handleIntents({ rediscover = true })
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end))
   h.sim.rainWetness, h.sim.rainWater = 1, 0.6
+  Fake.settleConditions(h, app)
   app.nextContextAt = 0
   frames(h, 2)
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end))

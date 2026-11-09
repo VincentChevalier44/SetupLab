@@ -144,13 +144,27 @@ tests['R02 tours rejetés avec leur raison'] = function()
     T.no(laps[1].valid, case[1])
     T.contains(laps[1].reason, case[1])
     T.eq(Recorder.best(rec, 'S1'), nil, 'jamais retenu comme meilleur tour')
+    -- temps d'AC (09/11/2026) : AC compte le tour quand seule l'analyse de SetupLab l'écarte
+    local acCounts = not (case[1] == 'tour invalidé par AC' or case[1] == 'voie des stands' or case[1] == 'voiture replacée')
+    T.eq(laps[1].acValid == true, acCounts, case[1] .. ' : compté par AC')
   end
+  -- choc, puis le tour invalidé par AC plus loin : AC ne le compte pas (la première raison reste)
+  local eA = env('monza')
+  local recA = Recorder.new()
+  local lapsA = drive(eA, 1, recA, function(_, h, rec)
+    h.car.damage = rawget(h.car, 'damage') or { [0] = 0, 0, 0, 0, 0 }
+    if rec.state == 'enregistrement' and rec.n == 1500 then h.car.damage[0] = h.car.damage[0] + 25 end
+    if rec.state == 'enregistrement' and rec.n == 2500 then h.car.isLapValid = false end
+  end)
+  T.contains(lapsA[1].reason, 'choc')
+  T.eq(lapsA[1].acValid, nil, "invalidé par AC plus loin : pas un temps d'AC")
   -- téléportation : trou de couverture
   local e = env('monza')
   e.profile.jumpAt, e.profile.jump = 0.5, 0.1
   local rec = Recorder.new()
   local laps = drive(e, 1, rec)
   T.contains(laps[1].reason, 'trou de couverture')
+  T.eq(laps[1].acValid, nil, "trou de couverture : pas un temps d'AC sûr")
   -- setup changé pendant le tour
   local e2 = env('monza')
   local calls = 0
@@ -160,6 +174,7 @@ tests['R02 tours rejetés avec leur raison'] = function()
     return calls <= 1 and 'A' or 'B'
   end)
   T.contains(laps2[#laps2].reason, 'setup modifié')
+  T.eq(laps2[#laps2].acValid, nil, "setup modifié : pas le temps d'un setup")
   -- mémoire pleine
   local e3 = env('monza')
   local rec3 = Recorder.new(500)
@@ -544,7 +559,12 @@ tests['RS01 séance de course : tour en trafic gardé et marqué, compté pour l
   local out = drive(e2, 1, rec2, follow, sig, { carsCount = 2 })
   T.no(out[1].valid)
   T.eq(out[1].reason, Recorder.TRAFFIC_REASON)
-  T.eq(rec2.laps.family.F1, nil, 'tour rejeté : pas compté')
+  -- temps d'AC (09/11/2026) : le tour, compté par AC, entre dans le meilleur tour d'AC de sa famille, jamais dans l'analyse
+  local f2 = rec2.laps.family.F1
+  T.ok(f2 ~= nil and out[1].acValid == true, 'compté par AC')
+  T.eq(f2.count, 0, "rejeté : pas compté dans l'analyse")
+  T.eq(f2.best, nil, 'jamais le meilleur tour propre')
+  T.near(f2.acBest, out[1].time, 1e-9, "meilleur tour d'AC")
 end
 
 -- Arrivée (05/11/2026) : le tour qui passe le drapeau compte ; le tour commencé après l'arrivée (décélération) est rejeté ;

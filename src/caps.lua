@@ -26,12 +26,11 @@ M.FUNCTIONS = {
   'ac.getCarID', 'ac.getCarName', 'ac.getCarDataFiles', 'ac.INIConfig.carData', 'ac.INIConfig.trackData',
   'ac.DataLUT11.carData', 'ac.readDataFile', 'ac.getFolder', 'ac.getTrackID', 'ac.getTrackLayout',
   'ac.getTrackFullID', 'ac.getTrackName', 'ac.hasTrackSpline', 'ac.trackProgressToWorldCoordinate',
-  'ac.getTrackAISplineSides', 'ac.worldCoordinateToTrackProgress', 'physics.raycastTrack',
-  'ac.getSetupSpinners', 'ac.getSetupTabs', 'ac.stringifyCurrentSetup', 'ac.INIConfig.currentSetup',
-  'ac.isSetupAvailableToEdit', 'ac.getCarSetupState', 'ac.getAssists', 'ac.getTyresName', 'ac.getTyresLongName',
-  'ac.getCarMaxSpeedWithGear', 'ac.onSetupFile', 'ac.onLapCompleted', 'ac.onRelease', 'ac.storage',
+  'ac.getTrackAISplineSides', 'physics.raycastTrack',
+  'ac.getSetupSpinners', 'ac.getSetupTabs', 'ac.stringifyCurrentSetup',
+  'ac.isSetupAvailableToEdit', 'ac.getCarSetupState', 'ac.getAssists', 'ac.onRelease', 'ac.storage',
   'ac.setClipboardText', 'ac.refreshSetups', 'io.available', 'io.load', 'io.save', 'io.fileExists', 'io.createFileDir',
-  'io.isFileNameAcceptable', 'ac.loadSetup', 'ac.setMessage',
+  'io.isFileNameAcceptable', 'io.scanDir', 'io.move', 'io.recycle', 'ac.loadSetup', 'ac.setMessage', 'ac.log',
   -- menu d'arrêt rapide (D8 amendé le 02/11/2026 : réglé par exporter.lua après un chargement de course)
   'ac.getPitstopSpinners', 'ac.setPitstopSpinnerValue',
 }
@@ -364,13 +363,20 @@ function M.evaluate(static, d)
       if sp.visible ~= false then visible = visible + 1 end
       if sp.readOnly then readOnly = readOnly + 1 end
     end
-    add('setup_read', 'Réglages : crans et plages', #setup.spinners > 0 and M.AVAILABLE or M.UNAVAILABLE,
-      #setup.spinners > 0 and (#setup.spinners .. ' réglages, ' .. visible .. ' visibles, ' .. readOnly .. ' verrouillés')
+    local fromIni = setup.spinnerSource == 'setup.ini'
+    add('setup_read', 'Réglages : crans et plages', #setup.spinners > 0 and (fromIni and M.PENDING or M.AVAILABLE)
+      or M.UNAVAILABLE,
+      #setup.spinners > 0 and (#setup.spinners .. ' réglages, ' .. visible .. ' visibles, ' .. readOnly .. ' verrouillés'
+        .. (fromIni and ' ; déduits de setup.ini (crans de CSP illisibles)' or ''))
       or ('aucun réglage lu : ' .. tostring(setup.spinnerReason)))
     add('setup_text', 'Contenu du setup courant', setup.file and M.AVAILABLE or M.UNAVAILABLE,
       setup.file and (#setup.file.order .. ' sections') or tostring(setup.textReason))
     local c = setup.comparison
-    if c.consistent then
+    if fromIni then
+      -- crans déduits du setup en cours lui-même : la comparaison serait circulaire ; verrous et valeurs par défaut absents
+      add('setup_encoding', 'Cohérence crans / fichier', M.PENDING, 'non vérifiable : crans déduits de setup.ini (réglages '
+        .. 'verrouillés par la série et setup par défaut de la voiture inconnus)')
+    elseif c.consistent then
       add('setup_encoding', 'Cohérence crans / fichier', M.AVAILABLE, c.matched .. '/' .. c.total .. ' identiques'
         .. (#c.missing > 0 and (' ; absents du fichier : ' .. listText(c.missing)) or ''))
     elseif #c.mismatched > 0 then

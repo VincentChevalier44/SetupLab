@@ -16,6 +16,7 @@
 --   (multiplication par 1, ajout de 0), signalées.
 
 local Util = require('src/util')
+local Sim = require('src/laptime_sim')
 local Config = require('src/config')
 local K = Config.K
 
@@ -75,12 +76,15 @@ function M.read(car)
     spec.notes[#spec.notes + 1] = 'MGU-H (charge selon la pression de turbo) non modélisé'
   end
   spec.defaultProfile = num('COCKPIT_CONTROLS', 'DELIVERY_PROFILE') or num('KINETIC', 'DEFAULT_CONTROLLER') or 0
-  for name, profileIni in pairs(car.ini) do
+  local names = {}
+  for name in pairs(car.ini) do names[#names + 1] = name end
+  table.sort(names)
+  for _, name in ipairs(names) do
     local front, index = name:match('^ctrl_ers_(front_?)(%d+)%.ini$')
     if index == nil then index = name:match('^ctrl_ers_(%d+)%.ini$') end
     if index then
       local list = front and spec.frontProfiles or spec.profiles
-      list[tonumber(index)] = readProfile(car, profileIni)
+      if list[tonumber(index)] == nil then list[tonumber(index)] = readProfile(car, car.ini[name]) end
     end
   end
   local k = spec.kinetic
@@ -226,7 +230,7 @@ end
 -- Physique de l'ERS sur la voiture configurée et sur un tour simulé
 -- ---------------------------------------------------------------------------
 
-local G = 9.80665
+local G = Util.G
 local RPM = 60 / (2 * math.pi)
 
 -- Forces de l'ERS à plein déploiement (N) sur la grille de vitesses de la voiture configurée (H21) :
@@ -293,7 +297,7 @@ end
 function M.arrays(spec, eff, track, buf, out)
   local n, ds = track.n, track.ds
   out.pFull, out.dt, out.rec = out.pFull or {}, out.dt or {}, out.rec or {}
-  local brakeCode = 2
+  local brakeCode = Sim.LIMIT.brake
   for k = 1, n do
     local k2 = k < n and k + 1 or 1
     local v, v2 = buf.v[k], buf.v[k2]
@@ -325,7 +329,7 @@ function M.runs(track, buf, start)
   local k = start
   for _ = 1, n do
     local code = buf.limit[k]
-    local accelerating = code == 3 or code == 4 or code == 5
+    local accelerating = code == Sim.LIMIT.traction or code == Sim.LIMIT.power or code == Sim.LIMIT.shift
     if accelerating then
       if current == nil then
         current = { first = k, count = 0 }
@@ -351,8 +355,8 @@ function M.profileMask(spec, index, eff, track, buf, out)
     local v = buf.v[k]
     local code = buf.limit[k]
     local i, g = gearAt(eff, v)
-    inputs.GAS = (code == 3 or code == 4 or code == 5) and 1 or 0
-    inputs.BRAKE = code == 2 and 1 or 0
+    inputs.GAS = (code == Sim.LIMIT.traction or code == Sim.LIMIT.power or code == Sim.LIMIT.shift) and 1 or 0
+    inputs.BRAKE = code == Sim.LIMIT.brake and 1 or 0
     inputs.RPMS = v / eff.wheelRadius * eff.gears[g] * eff.final * RPM
     inputs.SPEED_KMH, inputs.GEAR, inputs.LATG = v * 3.6, g, (buf.ayReq[k] or 0) / G
     local uK = profile and M.profileValue(profile, inputs) or 0

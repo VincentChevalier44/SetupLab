@@ -75,7 +75,7 @@ function M.sampleLaps(plan, levelF, levelR)
     for k = 1, N do samples[k] = k end
   else
     local chosen = { [1] = true, [N] = true, [mid] = true }
-    local count = mid == 1 and 2 or 3
+    local count = 3
     local function extreme(score)
       local best, at = -math.huge, nil
       for k = 1, N do

@@ -175,8 +175,9 @@ end
 
 -- Vos temps avec un setup (demande de Vincent du 22/10/2026 : « se baser sur mes temps à moi ») : tours
 -- valides, même état de piste, par « famille » de setup (sans les réglages changés en roulant : sur la DTM,
--- un tour avec la répartition de freinage touchée au volant compte pour la version chargée). { best, count,
--- sum } ou nil.
+-- un tour avec la répartition de freinage touchée au volant compte pour la version chargée). Statistiques de
+-- l'enregistreur (Recorder.keepFamily : best, count, sum, traffic, incident ; de la séance : acBest, sessionBest,
+-- sessionCount) ou nil.
 local function realLaps(app, family, bucket)
   local fam = app.recorder and app.recorder.laps and app.recorder.laps.family
   if fam == nil or family == nil then return nil end
@@ -186,13 +187,30 @@ end
 -- Temps de référence de vos tours : meilleur tour (tour rapide) ou moyenne (course), ou nil.
 local function versionLaps(app, e)
   local mine = realLaps(app, e.family, e.bucket)
-  if e.trialFamily and (mine == nil or mine.count == 0) then mine = realLaps(app, e.trialFamily, e.bucket) end
+  if e.trialFamily and (mine == nil or (mine.count or 0) == 0) then
+    local trial = realLaps(app, e.trialFamily, e.bucket)
+    if trial and ((trial.count or 0) > 0 or mine == nil) then mine = trial end
+  end
   return mine
 end
 
+-- Tour rapide : votre meilleur tour de la séance tel qu'AC le compte avec ce setup (demandes de Vincent du 09/11/2026 : les
+-- mêmes temps que l'onglet d'informations du jeu, séance en cours), tours en trafic ou avec un incident compris ; course :
+-- moyenne des tours analysés.
 local function realTime(stats, kind)
-  if stats == nil or (stats.count or 0) == 0 then return nil end
-  return kind == 'race' and stats.sum / stats.count or stats.best
+  if stats == nil then return nil end
+  if kind ~= 'race' then return Util.isFinite(stats.acBest) and stats.acBest or nil end
+  if (stats.count or 0) == 0 then return nil end
+  return stats.sum / stats.count
+end
+
+-- Meilleur tour propre de la séance (sans trafic ni incident : celui de l'analyse) quand il diffère du meilleur tour d'AC :
+-- son temps, false sans tour propre, nil s'il est le même.
+local function cleanBestApart(stats, kind)
+  if kind == 'race' or stats == nil or not Util.isFinite(stats.acBest) then return nil end
+  local clean = stats.sessionBest
+  if Util.isFinite(clean) and math.abs(clean - stats.acBest) < K.lapTimeEps then return nil end
+  return Util.isFinite(clean) and clean or false
 end
 
 -- Séance de course (demande de Vincent du 05/11/2026) : course lancée (rien ne se charge avant l'arrivée, arrêt au stand
@@ -687,7 +705,8 @@ local function compoundLines(host, r, palette)
       .. Util.fmt(e.J, 2) .. (e.conflict and ' (hors fenêtre)' or '')
   end
   host.ui.textWrapped('Composé : ' .. tostring(c.name) .. ' (' .. (c.changed and 'changé' or 'conservé')
-    .. (c.imposed and ', imposé' or '') .. ') ; critère au setup actuel : ' .. table.concat(parts, ' ; ') .. ' s')
+    .. (c.imposed and (', ' .. (c.rule == 'quali' and 'règle de qualification : le plus tendre' or 'imposé')) or '')
+    .. ') ; critère au setup actuel : ' .. table.concat(parts, ' ; ') .. ' s')
   if c.note then wrapped(host, c.note, palette.pending) end
   if c.calibrationNote then wrapped(host, c.calibrationNote, palette.pending) end
 end
@@ -940,7 +959,8 @@ local function loadReadiness(host, app, kind, palette)
     local ready = r.pit and r.stopped and r.menu
     withFont(host, 'Small', function()
       colored(host, ready and 'Prêt à charger :' or 'Pour charger :', palette[ready and 'available' or 'pending'])
-      for _, item in ipairs({ { 'au stand', r.pit }, { 'voiture arrêtée', r.stopped }, { 'menu de setup ouvert', r.menu } }) do
+      for _, item in ipairs({ { r.grid and 'sur la grille, avant le départ' or 'au stand', r.pit }, { 'voiture arrêtée', r.stopped },
+          { 'menu de setup ouvert', r.menu } }) do
         local text = item[1] .. (item[2] and ' (oui)' or ' (non)')
         nextInline(host, text)
         colored(host, text, palette[item[2] and 'available' or 'pending'])
@@ -1055,11 +1075,17 @@ end
 local function realText(stats, kind)
   local t = realTime(stats, kind)
   if t == nil then return '—' end
-  return M.lapTime(t) .. ' (' .. (kind == 'race' and 'moy. ' or '') .. stats.count .. ' tour' .. (stats.count > 1 and 's' or '') .. ')'
+  -- tour rapide : les tours propres de la séance (comme le meilleur tour affiché) ; course : ceux de l'analyse
+  local n = kind == 'race' and (stats.count or 0) or (stats.sessionCount or 0)
+  local s = n > 1 and 's' or ''
+  local apart = cleanBestApart(stats, kind)
+  if apart == false then return M.lapTime(t) .. ' (AC · aucun tour propre)' end
+  if apart then return M.lapTime(t) .. ' (AC · propre ' .. M.lapTime(apart) .. ', ' .. n .. ' tour' .. s .. ')' end
+  return M.lapTime(t) .. ' (' .. (kind == 'race' and 'moy. ' or '') .. n .. ' tour' .. s .. ')'
 end
 
 local function effectGain(gain)
-  return (gain >= 0 and '+' or '-') .. Util.fmt(math.abs(gain), 3) .. ' s'
+  return gainText(gain)
 end
 
 -- Une ligne d'un réglage changé : « Aileron arrière 6° › 2° (+0,341 s) ».
@@ -1349,7 +1375,7 @@ local function refineCard(host, app, intents, kind, palette)
       -- vos temps d'abord (demande de Vincent du 22/10/2026) ; temps simulés au survol de la version
       local rows = { { head(palette, 'Version'),
         head(palette, 'Vos tours', kind == 'race' and 'Moyenne de vos tours valides avec cette version'
-          or 'Votre meilleur tour valide avec cette version'),
+          or 'Votre meilleur tour de la séance avec cette version (chrono d\'AC)'),
         head(palette, 'Gain prévu'),
         head(palette, 'Gain réel', 'Vos temps avec le setup de départ du calcul, moins vos temps avec cette version'),
         head(palette, 'Avis', 'Validée, non gardée ou à juger') } }
@@ -1470,7 +1496,7 @@ local function resultTiles(host, app, kind, q, r, palette)
   tiles(host, app.ui, {
     { label = kind == 'race' and 'Votre tour moyen' or 'Votre meilleur tour', value = mine and M.lapTime(mine) or '—',
       color = kind ~= 'race' and mine and palette.best or nil,
-      tip = (mine and ('Avec le setup actuel : ' .. stats.count .. ' tour(s) valide(s).') or 'Roulez un tour propre avec ce setup.')
+      tip = (mine and ('Avec le setup actuel : ' .. realText(stats, kind) .. '.') or 'Roulez un tour propre avec ce setup.')
         .. '\n' .. simulated },
     { label = 'Objectif estimé', value = mine and M.lapTime(mine - gain) or '—', color = palette.available,
       tip = 'Votre temps moins le gain prévu.\n' .. simulated },
@@ -1772,7 +1798,8 @@ local function racePanel(host, app, intents, palette)
     local laps = app.raceLaps
     colored(host, '3. Tours de la course : ' .. (laps and tostring(laps) or 'à saisir'), palette[laps and 'available' or 'pending'])
     if host.ui.slider then
-      local ok, value, changed = Util.call(host.ui.slider, 'Tours de la course###race_laps', laps or 0, 0, 150, '%.0f', true)
+      local ok, value, changed = Util.call(host.ui.slider, 'Tours de la course###race_laps', laps or 0, 0, K.raceLapsSliderMax,
+        '%.0f', true)
       if ok and changed then
         local n = math.floor((tonumber(value) or 0) + 0.5)
         if n >= 1 and n ~= laps then intents.raceLaps = n end
@@ -1833,7 +1860,8 @@ local function kindSection(host, app, intents, kind, palette)
       local mine = realTime(realLaps(app, d.family, app.wet and app.wet.state or 'sec'), kind)
       tiles(host, app.ui, {
         { label = 'Votre meilleur tour', value = mine and M.lapTime(mine) or '—', color = mine and palette.best or nil,
-          tip = (mine and 'Votre meilleur tour valide avec le setup actuel.' or 'Roulez un tour propre avec ce setup.')
+          tip = (mine and 'Votre meilleur tour de la séance avec le setup actuel (chrono d\'AC).'
+            or 'Roulez un tour propre avec ce setup.')
             .. '\nTour simulé avec le setup actuel : ' .. M.lapTime(sim.time) .. ' ; vitesse maxi '
             .. Util.fmt(sim.vMax * 3.6, 0) .. ' km/h' },
         { label = 'Vitesse maxi', value = Util.fmt(sim.vMax * 3.6, 0) .. ' km/h' },
@@ -1897,12 +1925,13 @@ local function measureSection(host, app, intents, palette)
     calText, calColor = cr.usable and 'utilisable' or 'non utilisée', palette[cr.usable and 'available' or 'pending']
     calTip = cr.usable and 'Elle servira au prochain calcul de setup.' or tostring(cr.reason)
   end
-  local own = d and bestLap(app, d.signature, bucket)
+  local ownTime = d and realTime(realLaps(app, d.family, bucket), 'quali') or nil
   tiles(host, app.ui, {
     { label = 'Dernier tour', value = last and M.lapTime(last.time) or '—',
       color = last and palette[last.valid and 'available' or 'pending'] or nil,
       tip = last and (last.valid and 'Tour valide.' or ('Rejeté : ' .. tostring(last.reason))) or nil },
-    { label = 'Meilleur (setup actuel)', value = own and M.lapTime(own.time) or '—' },
+    { label = 'Meilleur (séance)', value = ownTime and M.lapTime(ownTime) or '—',
+      tip = 'Votre meilleur tour de la séance avec le setup actuel (chrono d\'AC).' },
     { label = 'Tours enregistrés', value = tostring(rec.finished or 0) },
     { label = 'Calibration', value = calText, color = calColor, tip = calTip },
   }, palette)
@@ -2488,7 +2517,8 @@ function M.stepModel(app, selected)
     if inRace then title = 'Course · analyse de vos tours' end
     local last = app.recorder and app.recorder.laps and app.recorder.laps.last
     if last and last.valid == false and r and r.phase == 'tours' then
-      text = text .. ' — dernier tour non compté : ' .. L.t(tostring(last.reason or 'non valide'))
+      text = text .. (last.acValid and ' — dernier tour hors analyse : ' or ' — dernier tour non compté : ')
+        .. L.t(tostring(last.reason or 'non valide')) .. (last.acValid and ' · compté au chrono d\'AC' or '')
     end
     if r and r.waiting and app.refineMinReached and not app.refineMinReached(r) then
       text = text .. ' (réglable : onglet RÉGLAGES, « Quand SetupLab propose un setup »)'
@@ -2927,7 +2957,7 @@ function M.overlay(host, app, intents)
     if tMine and tBefore then
       colored(host, word .. M.lapTime(tMine) .. '   avant ' .. M.lapTime(tBefore), palette.text)
       local gain = tBefore - tMine
-      if math.abs(gain) < 0.001 then
+      if math.abs(gain) < K.lapTimeEps then
         colored(host, 'Identique au setup d\'avant', palette.muted)
       else
         local color = palette[gain > 0 and 'available' or 'unavailable']
@@ -2935,8 +2965,7 @@ function M.overlay(host, app, intents)
         colored(host, (gain > 0 and 'Mieux de ' or 'Moins bien de ') .. Util.fmt(math.abs(gain), 3) .. ' s', color)
       end
     elseif tMine then
-      colored(host, word .. M.lapTime(tMine) .. ' (' .. mine.count .. ' tour' .. (mine.count > 1 and 's' or '') .. ')'
-        .. (e.fromMemory and '' or ' ; avant : aucun tour'), palette.text)
+      colored(host, word .. realText(mine, kind) .. (e.fromMemory and '' or ' ; avant : aucun tour'), palette.text)
     else
       colored(host, 'Un tour propre avec ' .. name .. ' : verdict sur vos temps.', palette.muted)
     end
@@ -2944,12 +2973,13 @@ function M.overlay(host, app, intents)
   if last and Util.isFinite(last.time) and last.time > 0 then
     local text = 'Dernier tour ' .. M.lapTime(last.time)
     if not last.valid then
-      text = text .. ' : non compté (' .. L.t(tostring(last.reason or 'non valide')) .. ')'
+      text = text .. (last.acValid and ' : hors analyse (' or ' : non compté (') .. L.t(tostring(last.reason or 'non valide')) .. ')'
+        .. (last.acValid and ' · compté au chrono d\'AC' or '')
     elseif not (tMine and e and last.family == e.family) and r and r.active then
       text = text .. ' : tour propre compté'
     elseif tMine and e and last.family == e.family then
       local delta = last.time - tMine
-      text = text .. (math.abs(delta) < 0.0005 and kind ~= 'race' and ' (votre meilleur)' or (' (' .. signedGain(delta) .. ')'))
+      text = text .. (math.abs(delta) < K.lapTimeEps and kind ~= 'race' and ' (votre meilleur)' or (' (' .. signedGain(delta) .. ')'))
     end
     small(host, text, palette.muted)
   end
@@ -2965,7 +2995,7 @@ function M.overlay(host, app, intents)
       for i = 1, math.min(#list, OVERLAY_ROWS) do
         local c = list[i]
         -- optimum en limite de la plage explorée : gain prévu suivi de « ? » (à confirmer)
-        local gain = { text = signedGain(c.contribution or 0) .. (c.atBound and ' ?' or ''),
+        local gain = { text = gainText(c.contribution or 0) .. (c.atBound and ' ?' or ''),
           color = palette[c.atBound and 'pending' or ((c.contribution or 0) >= 0 and 'available' or 'unavailable')],
           tip = c.atBound and 'À confirmer : optimum en limite de la plage explorée.' or nil }
         rows[#rows + 1] = { { text = c.var.label, tip = L.lang == 'en' and c.explanationEn or c.explanation },
@@ -2977,7 +3007,7 @@ function M.overlay(host, app, intents)
         for i = OVERLAY_ROWS + 1, #list do rest = rest + (list[i].contribution or 0) end
         local n = #list - OVERLAY_ROWS
         small(host, '+ ' .. n .. ' autre' .. (n > 1 and 's' or '') .. ' réglage' .. (n > 1 and 's' or '') .. ' : '
-          .. signedGain(rest), palette[rest >= 0 and 'available' or 'unavailable'])
+          .. gainText(rest), palette[rest >= 0 and 'available' or 'unavailable'])
       end
     end
   end
@@ -2986,15 +3016,15 @@ function M.overlay(host, app, intents)
     if pending.ready == false then
       local f = realLaps(app, pending.originFamily, pending.bucket)
       local n = f and f.count or 0
-      colored(host, 'v' .. pending.version .. ' en préparation : ' .. signedGain(pending.gain or 0) .. ' s prévu (provisoire), '
+      colored(host, 'v' .. pending.version .. ' en préparation : ' .. gainText(pending.gain or 0) .. ' prévu (provisoire), '
         .. n .. ' tour' .. (n > 1 and 's' or '') .. ' analysé' .. (n > 1 and 's' or ''), palette.pending)
       small(host, raceIn(app) and 'Proposée à l\'arrivée, pour votre prochaine course.' or 'Prête à votre retour au stand.',
         palette.muted)
     elseif raceRun(app) or raceEnd(app) then
-      colored(host, 'v' .. pending.version .. ' : ' .. signedGain(pending.gain or 0) .. ' s prévu, onglet COURSE : Valider pour '
+      colored(host, 'v' .. pending.version .. ' : ' .. gainText(pending.gain or 0) .. ' prévu, onglet COURSE : Valider pour '
         .. 'votre prochaine course', palette.accent)
     else
-      colored(host, 'v' .. pending.version .. ' prête : ' .. signedGain(pending.gain or 0) .. ' s prévu, au stand : Essayer, puis Valider',
+      colored(host, 'v' .. pending.version .. ' prête : ' .. gainText(pending.gain or 0) .. ' prévu, au stand : Essayer, puis Valider',
         palette.accent)
     end
   end
@@ -3037,6 +3067,7 @@ end
 
 -- Aides partagées avec les pages Racing 26 (src/dash.lua)
 M.tip, M.realLaps, M.realTime, M.versionLaps, M.realText = tip, realLaps, realTime, versionLaps, realText
+M.cleanBestApart = cleanBestApart
 M.raceRun, M.raceIn, M.raceEnd, M.raceLapsLine = raceRun, raceIn, raceEnd, raceLapsLine
 M.gainText, M.effectGain, M.itemText, M.KIND, M.loadLabel, M.LOAD_TIP = gainText, effectGain, itemText, KIND, loadLabel, LOAD_TIP
 M.START_NAMES, M.sessionRaceLaps = START_NAMES, sessionRaceLaps

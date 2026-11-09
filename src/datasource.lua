@@ -44,6 +44,30 @@ local function length(object)
   return 0
 end
 
+-- Liste renvoyée par CSP : une table, ou un objet indexable (cdata, userdata) selon la version (issue n° 2, CSP 0.2.11 :
+-- « format inattendu »). Renvoie la liste, ou nil et la raison (type reçu compris).
+local function listOf(ok, list)
+  if not ok then return nil, tostring(list) end
+  local kind = type(list)
+  if kind == 'table' then return list end
+  local n = (kind == 'cdata' or kind == 'userdata') and length(list) or 0
+  if n == 0 then return nil, 'format inattendu (' .. kind .. ')' end
+  -- objet indexable : copie en table, depuis l'indice 0 s'il existe (tableaux de CSP), sinon 1
+  local base = get(list, 0) ~= nil and 0 or 1
+  local out = {}
+  for i = 0, n - 1 do out[#out + 1] = get(list, base + i) end
+  return out
+end
+
+-- Grip de la piste lu dans CSP : en pour cent (1,5 à K.roadGripPercentMax) ramené à 0…1 ; hors de K.roadGripMin…Max :
+-- aberrant, nil (et la valeur lue, dite). Renvoie grip, ignoré.
+function M.normalizeGrip(raw)
+  local grip = raw
+  if Util.isFinite(grip) and grip > 1.5 and grip <= K.roadGripPercentMax then grip = grip / 100 end
+  if Util.isFinite(grip) and (grip < K.roadGripMin or grip > K.roadGripMax) then return nil, raw end
+  return grip, nil
+end
+
 local function callString(fn, ...)
   local ok, v = call(fn, ...)
   if ok and type(v) == 'string' then return Util.truncate(v, 128) end
@@ -297,8 +321,8 @@ function M.readCar(host, carIndex, ctx)
   car.safeId = Util.isSafeId(car.id)
   car.name = callString(get(ac, 'getCarName'), carIndex, true)
 
-  local ok, list = call(get(ac, 'getCarDataFiles'), carIndex)
-  if ok and type(list) == 'table' then
+  local list, listWhy = listOf(call(get(ac, 'getCarDataFiles'), carIndex))
+  if list then
     local files = copyStrings(list, K.maxDataFiles)
     if #files > 0 then
       car.dataFiles = files
@@ -306,7 +330,7 @@ function M.readCar(host, carIndex, ctx)
       car.dataFilesReason = 'liste vide (échec CSP) : liste de base utilisée'
     end
   else
-    car.dataFilesReason = ok and 'format inattendu' or list
+    car.dataFilesReason = listWhy
   end
 
   local carData = get(get(ac, 'INIConfig'), 'carData')
@@ -336,6 +360,18 @@ function M.readCar(host, carIndex, ctx)
           local okd, lines = pcall(M.describeRaw, sections, 'BASIC', 6)
           if okd then car.rawSample = lines end
         end
+      end
+    end
+    -- issue n° 2 (CSP 0.2.11, voiture RSS : tous les INI « vides ») : le texte brut du fichier, lu par ac.readDataFile
+    if car.ini[name] == nil then
+      local text, why = M.readRaw(host, car, name, ctx.tick)
+      local data = text and Util.parseIni(text, { maxBytes = K.maxTextBytes, maxSections = K.maxIniSections,
+        maxKeys = K.maxIniKeys, maxValueChars = K.maxValueChars }, ctx.tick) or nil
+      if data and #data.order > 0 then
+        car.ini[name] = data
+        car.iniStatus[name] = 'ok (texte brut)'
+      elseif text == nil and why ~= 'illisible' then
+        car.iniStatus[name] = tostring(car.iniStatus[name]) .. ', brut : ' .. tostring(why)
       end
     end
   end
@@ -608,26 +644,82 @@ function M.compareSetup(spinners, file, tick)
   return r
 end
 
--- Crans de setup assainis (copySpinner), plafonnés à K.maxSetupSpinners : la même lecture sert à la
--- découverte et à la signature du setup en roulant (sinon une signature pourrait diverger en silence).
-function M.readSpinners(host, tick)
-  local ok, list = call(get(host.ac, 'getSetupSpinners'))
-  if not ok or type(list) ~= 'table' then return nil, ok and 'format inattendu' or list end
-  local spinners = {}
-  for i = 1, min(length(list), K.maxSetupSpinners) do
-    if tick then tick() end
-    local spinner = M.copySpinner(get(list, i))
-    if spinner then spinners[#spinners + 1] = spinner end
+-- Crans reconstruits depuis setup.ini de la voiture et les valeurs VALUE du setup en cours (issue n° 2 : CSP 0.2.11 ne
+-- donne pas les crans), dans l'encodage des fichiers de setup d'AC (API_NOTES §3, celui des crans de CSP) : carrossage en
+-- dixièmes de degré ; SHOW_CLICKS=2 en numéro de cran depuis MIN ; rapports .rto en items (numéro de ligne) ; les autres
+-- en valeur absolue, entière. ratios : car.ratios (rapports lus). Renvoie la liste (fromIni = true), ou nil et la raison.
+function M.spinnersFromSetupIni(host, setupIni, tick, ratios)
+  if not (type(setupIni) == 'table' and setupIni.sections and setupIni.order) then return nil, 'setup.ini illisible' end
+  local okt, text = call(get(host.ac, 'stringifyCurrentSetup'), true, false)
+  if not (okt and type(text) == 'string' and #text > 0) then return nil, 'setup en cours illisible' end
+  local file = Util.parseIni(text, { maxBytes = K.maxTextBytes, maxSections = K.maxIniSections, maxKeys = K.maxIniKeys,
+    maxValueChars = K.maxValueChars }, tick)
+  local out = {}
+  for _, name in ipairs(setupIni.order) do
+    if #out >= K.maxSetupSpinners then break end
+    local sec = setupIni.sections[name]
+    local value = Util.parseNumber(Util.iniGet(file, name, 'VALUE'))
+    local lo, hi, step = Util.parseNumber(sec.MIN), Util.parseNumber(sec.MAX), Util.parseNumber(sec.STEP) or 1
+    local clicksMode = Util.parseNumber(sec.SHOW_CLICKS) or 0
+    local label = Util.truncate(tostring(sec.NAME or name), 96)
+    local sp = nil
+    local entries = sec.RATIOS and type(ratios) == 'table' and ratios[tostring(sec.RATIOS):lower()] or nil
+    if type(name) ~= 'string' or #name > 64 or value == nil then
+      sp = nil
+    elseif entries and #entries > 0 then
+      local items = {}
+      for i, e in ipairs(entries) do items[i] = e.label end
+      sp = { min = 0, max = #items - 1, step = 1, displayMultiplier = 1, items = items, showClicksMode = 0 }
+    elseif lo and hi and hi >= lo and step > 0 then
+      if name:find('^CAMBER_') then
+        sp = { min = math.floor(lo * 10 + 0.5), max = math.floor(hi * 10 + 0.5), step = math.max(1, math.floor(step + 0.5)),
+          displayMultiplier = 0.1, units = '°', showClicksMode = clicksMode }
+      elseif clicksMode == 2 then
+        sp = { min = 0, max = math.floor((hi - lo) / step + 0.5), step = 1, displayMultiplier = 1, showClicksMode = 2 }
+      else
+        sp = { min = math.floor(lo + 0.5), max = math.floor(hi + 0.5), step = math.max(1, math.floor(step + 0.5)),
+          displayMultiplier = 1, showClicksMode = clicksMode }
+      end
+    end
+    if sp and value >= sp.min - K.setupValueTol and value <= sp.max + K.setupValueTol then
+      sp.name, sp.label, sp.value, sp.visible, sp.readOnly, sp.fromIni = name, label, value, true, false, true
+      sp.units = sp.units or ''
+      out[#out + 1] = sp
+    end
   end
-  return spinners
+  if #out == 0 then return nil, 'aucun réglage à bornes dans setup.ini' end
+  return out
 end
 
-function M.readSetup(host, ctx)
+-- Crans de setup assainis (copySpinner), plafonnés à K.maxSetupSpinners : la même lecture sert à la
+-- découverte et à la signature du setup en roulant (sinon une signature pourrait diverger en silence).
+-- setupIni, ratios (facultatifs) : setup.ini et rapports lus de la voiture, pour le repli quand CSP ne donne pas les crans.
+function M.readSpinners(host, tick, setupIni, ratios)
+  local list, why = listOf(call(get(host.ac, 'getSetupSpinners')))
+  local spinners = {}
+  if list then
+    for i = 1, min(length(list), K.maxSetupSpinners) do
+      if tick then tick() end
+      local spinner = M.copySpinner(get(list, i))
+      if spinner then spinners[#spinners + 1] = spinner end
+    end
+  end
+  if #spinners > 0 then return spinners end
+  if setupIni then
+    local fromIni, iniWhy = M.spinnersFromSetupIni(host, setupIni, tick, ratios)
+    if fromIni then return fromIni, nil, 'setup.ini' end
+    why = tostring(why or 'liste vide') .. ' ; setup.ini : ' .. tostring(iniWhy)
+  end
+  if list then return spinners, why end
+  return nil, why
+end
+
+function M.readSetup(host, ctx, setupIni, ratios)
   local ac = host.ac
   local s = { spinners = {}, tabs = {}, text = nil, file = nil }
-  local spinners, why = M.readSpinners(host, ctx.tick)
+  local spinners, why, source = M.readSpinners(host, ctx.tick, setupIni, ratios)
   if spinners then
-    s.spinners = spinners
+    s.spinners, s.spinnerSource = spinners, source
   else
     s.spinnerReason = why
   end
@@ -1042,8 +1134,8 @@ function M.readContext(host)
   -- voitures de la séance (filtre de trafic du mode en ligne)
   c.carsCount = num(sim, 'carsCount')
   c.rainWetness, c.rainIntensity, c.rainWater = num(sim, 'rainWetness'), num(sim, 'rainIntensity'), num(sim, 'rainWater')
-  c.wet = isWet({ rainWetness = c.rainWetness, rainIntensity = c.rainIntensity, rainWater = c.rainWater })
-  c.airTemp, c.roadTemp, c.roadGrip = num(sim, 'ambientTemperature'), num(sim, 'roadTemperature'), num(sim, 'roadGrip')
+  c.airTemp, c.roadTemp = num(sim, 'ambientTemperature'), num(sim, 'roadTemperature')
+  c.roadGrip, c.roadGripIgnored = M.normalizeGrip(num(sim, 'roadGrip'))
   c.carId = callString(get(ac, 'getCarID'), 0)
   c.trackFullId = callString(get(ac, 'getTrackFullID'), '/')
   c.key = tostring(c.carId) .. '|' .. tostring(c.trackFullId)

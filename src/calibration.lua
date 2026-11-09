@@ -85,7 +85,8 @@ function M.lapConditions(lap)
     bucket = wet and 'pluie' or 'sec', wetness = wet and c.wetness or 0, water = wet and c.water or 0,
     waterMm = wet and lap.waterMm or nil,
   }
-  if (lap.pressure[1] or 0) > 0 and (lap.pressure[3] or 0) > 0 then
+  if (lap.pressure[1] or 0) > 0 and (lap.pressure[2] or 0) > 0 and (lap.pressure[3] or 0) > 0
+      and (lap.pressure[4] or 0) > 0 then
     conditions.hotPressureF = (lap.pressure[1] + lap.pressure[2]) / 2
     conditions.hotPressureR = (lap.pressure[3] + lap.pressure[4]) / 2
   end
@@ -474,7 +475,7 @@ function M.estimate(lap, info, tick)
   tick = tick or function() end
   local m = info.mass
   if not Util.isFinite(m) or m <= 0 then return nil, 'masse CSP inconnue' end
-  local G = 9.80665
+  local G = Util.G
   local rho = 101325 / (287.05 * (Util.finiteOr(info.airTemp, 20) + 273.15))
   local track = info.track
   local x1, x2, y = {}, {}, {}

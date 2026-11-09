@@ -172,7 +172,7 @@ tests['K05 évaluation complète : GT3 à Spa'] = function()
 end
 
 tests['K06 évaluation dégradée : données illisibles, encodage, pluie, DRS/ERS, E/S'] = function()
-  local d = discover(host('lamborghini_huracan_gt3_evo2', 'spa', { carDataError = true }))
+  local d = discover(host('lamborghini_huracan_gt3_evo2', 'spa', { carDataError = true, rawForm = 'aucune' }))
   T.eq(status(d, 'car_ini'), 'unavailable')
   local _, detail = status(d, 'car_ini')
   T.contains(detail, 'mesure uniquement')

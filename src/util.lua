@@ -4,6 +4,9 @@
 
 local M = {}
 
+-- Accélération de la pesanteur (m/s²), la même partout.
+M.G = 9.80665
+
 local floor, min, max, huge = math.floor, math.min, math.max, math.huge
 
 M.EPS = 1e-9

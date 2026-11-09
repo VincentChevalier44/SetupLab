@@ -71,7 +71,7 @@ end
 local function files(h)
   local n = 0
   for path in pairs(h.written) do
-    if path:find(Config.exportQualiPrefix, 1, true) then n = n + 1 end
+    if path:find((Config.fileDefaultName .. '_' .. Config.fileGenre.quali .. '_'), 1, true) then n = n + 1 end
   end
   return n
 end

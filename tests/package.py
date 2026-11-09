@@ -17,7 +17,7 @@ APP = Path(__file__).resolve().parent.parent
 DIST = APP / 'dist'
 
 # Liste blanche : fichiers et dossiers distribués (tout le reste est exclu).
-FILES = ['SetupLab.lua', 'manifest.ini', 'icon.png', 'README.md', 'CHANGELOG.md']
+FILES = ['SetupLab.lua', 'manifest.ini', 'icon.png', 'README.md', 'CHANGELOG.md', 'LICENSE']
 DIRS = {'src': ('.lua',), 'docs': ('.md', '.html'), 'fonts': ('.ttf', '.txt')}
 # os.preciseClock (horloge officielle de CSP) : seule exception, accord de Vincent du 29/10/2026 ; os.date (heure locale,
 # accord du 03/11/2026) n'est jamais appelée directement : la colle la lit et la passe (aucun « os.date( » distribué)

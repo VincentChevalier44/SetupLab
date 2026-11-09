@@ -180,7 +180,7 @@ function M.plan(args)
       end
     end
   end
-  local planResult, planEffective, planSummary = settle(ctx, mask, socStart)
+  local planResult, planEffective, planSummary = settle(ctx, mask, socStart, race)
   local useDefault = planResult.time > defaultResult.time
   local plan = {
     timeNone = none.time, timeDefault = defaultResult.time,

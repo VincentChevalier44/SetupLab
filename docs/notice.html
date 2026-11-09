@@ -202,7 +202,7 @@
 
 <header class="top">
   <div class="inner">
-    <span class="badge">Version 1.0 — beta 1.5.8</span>
+    <span class="badge">Version 1.0 — beta 1.5.9</span>
     <p class="switch"><a href="notice.fr.html" hreflang="fr">Version française</a></p>
     <h1>SetupLab — user guide</h1>
     <p class="lead">The Custom Shaders Patch app that computes, explains and refines your Assetto Corsa setups, fitted to your own laps.</p>
@@ -256,7 +256,7 @@
   <h2>2. Installation</h2>
   <ol>
     <li>Requirements: Assetto Corsa with <strong>Custom Shaders Patch 0.2.11</strong> (the free version installed by Content Manager) or newer, paid previews included.</li>
-    <li>Extract <code>SetupLab-1.0.0-beta.1.5.8.zip</code> into <code>assettocorsa/apps/lua/</code>: it already contains the <code>SetupLab/</code> folder. In the end, <code>assettocorsa/apps/lua/SetupLab/</code> holds <code>SetupLab.lua</code> and <code>manifest.ini</code> (no <code>SetupLab</code> folder inside another <code>SetupLab</code>). To update: close Assetto Corsa, <strong>delete the old <code>apps/lua/SetupLab</code> folder</strong>, then extract the new archive. Your settings, track memory and saved setups are kept: they are stored outside this folder. Since 1.5.4, SetupLab can also update itself (see below).</li>
+    <li>Extract <code>SetupLab-1.0.0-beta.1.5.9.zip</code> into <code>assettocorsa/apps/lua/</code>: it already contains the <code>SetupLab/</code> folder. In the end, <code>assettocorsa/apps/lua/SetupLab/</code> holds <code>SetupLab.lua</code> and <code>manifest.ini</code> (no <code>SetupLab</code> folder inside another <code>SetupLab</code>). To update: close Assetto Corsa, <strong>delete the old <code>apps/lua/SetupLab</code> folder</strong>, then extract the new archive. Your settings, track memory and saved setups are kept: they are stored outside this folder. Since 1.5.4, SetupLab can also update itself (see below).</li>
     <li>In game, open <strong>SetupLab</strong> from the app bar or the setup screen. Three more windows exist: <strong>SetupLab Track</strong> (the same interface, opened from the app bar while driving: in a race you start on the grid), <strong>SetupLab Overlay</strong> (on track) and <strong>SetupLab Debug</strong> (diagnostics).</li>
   </ol>
     <h3>In-game update</h3>
@@ -352,7 +352,7 @@
 
 <section id="loading">
   <h2>9. Loading a setup into the car</h2>
-  <p>Loading happens <strong>in the pits, car stopped, setup menu open</strong>. Next to the green button, SetupLab shows the file to load, the pit state (<em>in the pits</em>, <em>car stopped</em>, <em>setup menu open</em>, each in green or orange) and the reason for a refusal.</p>
+  <p>Loading happens <strong>in the pits, car stopped, setup menu open</strong>; in a race session, also <strong>on the grid before the start</strong> (resume your race, start from your qualifying version, try the race v1). Once the race has started, nothing is loaded before the finish. Next to the green button, SetupLab shows the file to load, the pit state (<em>in the pits</em> or <em>on the grid</em>, <em>car stopped</em>, <em>setup menu open</em>, each in green or orange) and the reason for a refusal.</p>
   <ol>
     <li>Click <span class="btn go">Load the … setup into the car</span>: one click is enough.</li>
     <li>SetupLab first copies the current setup when that copy is useful (<code>SetupLab_Before_load_….ini</code>, <code>SetupLab_Avant_chargement_….ini</code> in French), loads the file, then checks that the car has the expected setup. No copy is made when the car holds, untouched, a SetupLab setup.</li>
@@ -364,7 +364,7 @@
   <h2>10. Your lap times</h2>
   <p>SetupLab relies on <strong>your real lap times</strong>:</p>
   <ul>
-    <li><strong>your best lap</strong> with the current setup (in a race: <strong>your average lap</strong>);</li>
+    <li><strong>your best lap of the session</strong> with the current setup, as AC's timing counts it: the same time as AC's information tab, laps in traffic or with a small incident included; the clean lap used by the analysis is shown next to it when different (in a race: <strong>your average lap</strong>);</li>
     <li><strong>estimated target</strong>: your time minus the predicted gain;</li>
     <li>for each version: <strong>your laps</strong> with it, the <strong>predicted gain</strong> and the <strong>real gain</strong>. A partial version counts the laps driven with its full trial.</li>
   </ul>
@@ -398,7 +398,7 @@
 
 <section id="memory">
   <h2>13. Track memory and lock</h2>
-  <p>The setup you validate is kept, from one AC launch to the next, for this car on this track (layout included), per <strong>session</strong> (practice or track day, qualifying, race) and per <strong>track state</strong> (dry or wet). The <strong>MEMORY</strong> tab lists them and offers to load them, in one click, in the pits. A <strong>locked</strong> setup is no longer changed by the refinement; "Unlock" gives it back to the refinement.</p>
+  <p>The setup you validate is kept, from one AC launch to the next, for this car on this track (layout included), per <strong>session</strong> (practice or track day, qualifying, race) and per <strong>track state</strong> (dry or wet). The <strong>MEMORY</strong> tab lists them and offers to load them, in one click, in the pits. A <strong>locked</strong> setup is no longer changed by the refinement; "Unlock" gives it back to the refinement. Each one shows <strong>your real time</strong> with it, over all sessions (best lap, or average lap for the race); before your first lap with it, the simulated time is shown in grey, marked as such.</p>
 </section>
 
 <section id="race">
@@ -430,7 +430,8 @@
 
 <section id="rain">
   <h2>16. Rain</h2>
-  <p>CSP rain, and Pure's rain, which goes through CSP, is read directly. As soon as the track gets wet, every computation proposes a <strong>wet setup</strong>: compound chosen between slicks, intermediates and wets; pressures for cooler tyres; wing and settings optimised with wet grip; stricter traction control and ABS. Wet laps calibrate a model separate from the dry one.</p>
+  <p>CSP rain, and Pure's rain, which goes through CSP, is read directly. As soon as the track gets wet, every computation proposes a <strong>wet setup</strong>: compound chosen between slicks, intermediates and wets; pressures for cooler tyres; wing and settings optimised with wet grip; stricter traction control and ABS. Wet laps calibrate a model separate from the dry one. The track only switches between dry and wet after the new state has lasted 20 seconds: a brief reading of water no longer flips the setups.</p>
+  <p><strong>Qualifying tyres</strong>: on a dry track, a qualifying setup uses the softest compound of the mounted range (hypersoft, ultrasoft, supersoft, then soft). A compound you refused with "Modify…", or one imposed in the settings, comes first.</p>
 </section>
 
 <section id="tabs">
@@ -469,7 +470,7 @@
   <ul>
     <li>Version numbers continue from one session to the next on the same track, whatever the language.</li>
     <li>The <strong>Setup name</strong> field replaces "SetupLab". Accents and spaces are removed; the kind is not repeated if your name already ends with it.</li>
-    <li><strong>Your best lap</strong> is added to the end of the name of a kept qualifying version (<code>SetupLab_Quali_v2_1.41.792.ini</code>), with the car stopped, never while driving.</li>
+    <li><strong>Your best lap</strong> (AC's timing) is added to the end of the name of a kept qualifying version (<code>SetupLab_Quali_v2_1.41.792.ini</code>), with the car stopped, never while driving.</li>
     <li>Never overwritten: a name already taken gets <code>-2</code>, <code>-3</code>…</li>
   </ul>
   <h3>Automatic tidying</h3>
@@ -527,7 +528,7 @@
 
 <footer>
   <div class="inner">
-    SetupLab 1.0 — beta 1.5.8 (<code>1.0.0-beta.1.5.8</code>) · MIT licence ·
+    SetupLab 1.0 — beta 1.5.9 (<code>1.0.0-beta.1.5.9</code>) · MIT licence ·
     <a href="https://github.com/VincentChevalier44/SetupLab">github.com/VincentChevalier44/SetupLab</a><br>
     Assetto Corsa is a trademark of Kunos Simulazioni. SetupLab is an independent project.
   </div>

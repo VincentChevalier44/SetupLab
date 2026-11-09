@@ -412,7 +412,7 @@ tests['M11 setup course depuis l\'app : mesures du tour, fichier, validation (J6
   h.click = 'Enregistrer le setup course'
   frames(h, 1, profile)
   T.ok(app.race.saved and app.race.saved.ok, tostring(app.ui.message))
-  T.ok(app.race.saved.path:find(Config.exportRacePrefix, 1, true), app.race.saved.path)
+  T.ok(app.race.saved.path:find((Config.fileDefaultName .. '_' .. Config.fileGenre.race .. '_'), 1, true), app.race.saved.path)
   local Util = require('src/util')
   local written = Util.parseIni(h.written[app.race.saved.path])
   local fuel = tonumber(Util.iniGet(written, 'FUEL', 'VALUE'))

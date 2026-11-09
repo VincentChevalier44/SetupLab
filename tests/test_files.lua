@@ -226,14 +226,14 @@ tests['RG03 meilleur tour réel dans le nom (qualification) : renommé voiture a
   T.ok(Exporter.ownFile({ ac = h.ac, io = h.io }, name, v1.hash), 'toujours reconnu, chargeable')
   T.contains(app.filesNote, name)
   -- même temps (ou plus lent) : rien de plus
-  app.queueBestRename({ valid = true, family = v1.family, bucket = 'sec' })
+  app.queueBestRename({ valid = true, acValid = true, family = v1.family, bucket = 'sec' })
   T.eq(#app.fileOps, 0, 'temps du nom non battu')
   -- course : jamais de temps dans le nom
   app.recorder.laps.family['famille-course'] = { best = 100, count = 1, sum = 100 }
   app.written['SetupLab_Course_v1.ini'] = 'h'
   app.memory['course|sec'] = { group = 'course', bucket = 'sec', file = 'SetupLab_Course_v1.ini', text = 'x', hash = 'h',
     family = 'famille-course' }
-  app.queueBestRename({ valid = true, family = 'famille-course', bucket = 'sec' })
+  app.queueBestRename({ valid = true, acValid = true, family = 'famille-course', bucket = 'sec' })
   T.eq(#app.fileOps, 0, 'course : pas de renommage')
   app.memory['course|sec'], app.written['SetupLab_Course_v1.ini'] = nil, nil
   T.eq(r.driven, v1.version)

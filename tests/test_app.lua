@@ -244,6 +244,7 @@ tests['A11 interface : tous les états, aucune écriture'] = function()
   T.contains(line, 'panne simulée')
   T.eq(kind, 'unavailable')
   h.sim.rainWetness = 0.5
+  Fake.settleConditions(h, app)
   app.nextContextAt = 0
   frames(h, 1)
   -- découverte en échec : dite d'abord (elle bloque le calcul) ; sinon piste mouillée, setups pluie (D16 amendé)

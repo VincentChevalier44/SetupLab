@@ -44,8 +44,8 @@ EN = {
         'Fuel added for the race on top of the predicted consumption, as a percentage. More margin: less risk of running dry, a slightly heavier car.',
     'Tours de carburant embarqués pour un setup de tour rapide (0 = la règle par défaut : tour de sortie, tour lancé et tour de rentrée).':
         'Laps of fuel carried for a qualifying setup (0 = the default rule: out lap, flying lap and in lap).',
-    "Équilibre recherché par le calcul : vers 0, le setup le plus rapide possible ; vers 1, un setup plus stable et plus facile à piloter, au prix d'un peu de temps.":
-        'Balance the computation aims for: towards 0, the fastest possible setup; towards 1, a more stable setup that is easier to drive, at the cost of a little time.',
+    "Équilibre recherché par le calcul : vers 1, le setup le plus rapide possible ; vers 0, un setup plus stable et plus facile à piloter, au prix d'un peu de temps.":
+        'Balance the computation aims for: towards 1, the fastest possible setup; towards 0, a more stable setup that is easier to drive, at the cost of a little time.',
     "Part des tours de course où vous pensez être dans la fenêtre du DRS (trafic). Sert au réglage d'aileron et de rapports en course.":
         'Share of race laps where you expect to be within DRS range (traffic). Used for the race wing and gear settings.',
     "Rend le modèle plus optimiste sur votre pilotage, en pourcentage d'adhérence. À laisser à 0 tant que le modèle est calibré sur vos tours.":

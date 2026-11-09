@@ -428,10 +428,11 @@ local function header(tabs, W, narrow)
   text('section', 12, langText, lx + 7, (rowH - lh) / 2, c.light)
   tip('Language / Langue : English, Français.')
   -- état : au stand, en piste (enregistrement), en veille
-  local atPit = app.carAtPit and app.carAtPit()
+  local grid = app.raceGrid and app.raceGrid()
+  local atPit = (app.carAtPit and app.carAtPit()) or grid
   local idle = app.auto ~= true or app.inert ~= nil
-  local state = idle and 'EN VEILLE' or (atPit and 'AU STAND' or 'EN PISTE · REC')
-  if narrow then state = idle and 'VEILLE' or (atPit and 'STAND' or 'PISTE') end
+  local state = idle and 'EN VEILLE' or (grid and 'SUR LA GRILLE' or (atPit and 'AU STAND' or 'EN PISTE · REC'))
+  if narrow then state = idle and 'VEILLE' or (grid and 'GRILLE' or (atPit and 'STAND' or 'PISTE')) end
   local fg = app.auto ~= true and c.tabIdle or (atPit and c.go or c.rec)
   local bg = idle and c.pillIdle or (atPit and c.pillGo or c.pillRec)
   local ps = L.t(state)
@@ -700,7 +701,9 @@ local function loadState(kind)
   local r = app.loadReady
   local parts = nil
   if r then
-    parts = { { L.t('au stand'), r.pit }, { L.t('arrêtée'), r.stopped }, { L.t('menu ouvert'), r.menu } }
+    -- sur la grille avant le départ d'une course (09/11/2026) : chargement permis comme au stand
+    parts = { { L.t(r.grid and 'sur la grille' or 'au stand'), r.pit }, { L.t('arrêtée'), r.stopped },
+      { L.t('menu ouvert'), r.menu } }
   end
   local follow, color = nil, nil
   local check, test = app.loadCheck, app.loadTest
@@ -909,6 +912,13 @@ local function stepCard(model, kind, x, y, w, wide, dry)
     lab(bestLabel, rx, ry)
     local best = (vm and vm.tMine) or mine
     text('display', 42, best and X.U.lapTime(best) or '—', rx, ry + 16, (best and kind ~= 'race') and c.best or c.light)
+    -- meilleur tour d'AC affiché (09/11/2026) ; le meilleur tour propre de l'analyse à côté quand il diffère
+    local stats = (vm and vm.tMine) and vm.mine or X.U.realLaps(app, app.discovery and app.discovery.family, bucketOf(app))
+    local apart = X.U.cleanBestApart(stats, kind)
+    if apart ~= nil then
+      local s = apart and L.f('propre %s', X.U.lapTime(apart)) or L.t('aucun tour propre')
+      text('text', 10.5, s, rx + rightW - measure('text', 10.5, s), ry + 2, c.grey)
+    end
     local half = (rightW - 10) / 2
     if real then
       chrono('Gain réel', X.U.gainText(real), rx, ry + 72, 24, real > 0 and c.go or c.danger)
@@ -1209,7 +1219,8 @@ local function tyresPanel(r, x, y, w, dry)
   lab('Pneus à chaud · psi', x + 14, y + 10)
   local name = r.compound and r.compound.name
   if name then
-    local s = up(tostring(name))
+    -- pneus de qualification : le plus tendre de la gamme (règle de Vincent du 09/11/2026)
+    local s = up((r.compound.rule == 'quali' and (L.t('qualif · le plus tendre') .. ' · ') or '') .. tostring(name))
     text('section', 11.5, s, x + w - 14 - measure('section', 11.5, s), y + 9, c.light)
   end
   local tw = (w - 28 - 6) / 2
@@ -1744,7 +1755,7 @@ local function lapsRow(px, cy, pw, dry)
   if X.ui.slider then
     X.ui.setCursor(vec(1, X.ox + sx + 34, X.oy + cy + 2))
     Util.call(X.ui.setNextItemWidth, 90)
-    local ok, value, changed = Util.call(X.ui.slider, '###race_laps', laps, 0, 150, '%.0f', true)
+    local ok, value, changed = Util.call(X.ui.slider, '###race_laps', laps, 0, K.raceLapsSliderMax, '%.0f', true)
     if ok and changed then
       local n = math.floor((tonumber(value) or 0) + 0.5)
       if n >= 1 and n ~= laps then X.intents.raceLaps = n end
@@ -1962,7 +1973,8 @@ local function trafficPanel(r, x, y, w, dry)
   lab('Pneus · trafic', px, y + 12)
   local name = r.compound and r.compound.name
   if name then
-    local s = up(tostring(name))
+    -- pneus de qualification : le plus tendre de la gamme (règle de Vincent du 09/11/2026)
+    local s = up((r.compound.rule == 'quali' and (L.t('qualif · le plus tendre') .. ' · ') or '') .. tostring(name))
     text('section', 11.5, s, x + w - 14 - measure('section', 11.5, s), y + 11, c.light)
   end
   local cy = y + 32
@@ -2186,10 +2198,20 @@ local function memoryCell(row, bucket, x, y, w, h)
   if m.problem then
     textBox('text', 11, L.t(m.problem), px, y + 46, w - 24, c.badInk)
   else
-    local tv = (Util.isFinite(m.time) and m.time > 0) and X.U.lapTime(m.time) or '—'
-    local tw = text('display', 20, tv, px, y + 44, row.key == 'course' and c.light or c.best)
-    lab(row.key == 'course' and 'votre tour moyen' or (m.locked and 'affinage arrêté' or 'votre meilleur'), px + tw + 8, y + 52,
-      c.grey, 10)
+    -- vos temps réels avec ce setup (meilleur tour d'AC, moyenne en course) ; sans tour roulé, le temps prévu, dit comme tel
+    -- (constat de Vincent du 09/11/2026 : le tour simulé s'affichait comme « votre meilleur »)
+    local race = row.key == 'course'
+    local real = race and m.mean or m.best
+    local tv, sub, color
+    if Util.isFinite(real) and real > 0 then
+      tv, sub, color = X.U.lapTime(real), race and 'votre tour moyen' or 'meilleur · toutes séances', race and c.light or c.best
+    elseif Util.isFinite(m.time) and m.time > 0 then
+      tv, sub, color = X.U.lapTime(m.time), 'temps simulé · aucun tour mesuré', c.grey
+    else
+      tv, sub, color = '—', race and 'votre tour moyen' or 'meilleur · toutes séances', c.light
+    end
+    local tw = text('display', 20, tv, px, y + 44, color)
+    text('label', 10, fitted('label', 10, up(L.t(sub)), w - 24 - tw - 8), px + tw + 8, y + 52, c.grey)
   end
   local by = y + h - 32
   local bx = px
@@ -2300,15 +2322,14 @@ local function measurePage(x, y, w)
   elseif cr then
     calText, calColor = cr.usable and 'utilisable' or 'non utilisée', cr.usable and c.go or c.warn
   end
-  local own = d and app.recorder and app.recorder.laps.best[(bucket == 'pluie') and (tostring(d.signature) .. '#pluie')
-    or d.signature]
+  local ownTime = d and X.U.realTime(X.U.realLaps(app, d.family, bucket), 'quali') or nil
   -- tuiles
   local cols = wide and 4 or 2
   local tw = (w - 8 * (cols - 1)) / cols
   local tiles = {
     { last and (last.valid and 'Dernier tour · valide' or 'Dernier tour · rejeté') or 'Dernier tour',
       last and X.U.lapTime(last.time) or '—', last and (last.valid and c.go or c.warn) or c.light },
-    { 'Meilleur · setup actuel', own and X.U.lapTime(own.time) or '—', own and c.best or c.light },
+    { 'Meilleur · séance', ownTime and X.U.lapTime(ownTime) or '—', ownTime and c.best or c.light },
     { 'Tours enregistrés', tostring(rec and rec.finished or 0), c.light },
     { 'Calibration', up(L.t(calText)), calColor },
   }
@@ -2818,7 +2839,7 @@ local function overlayInfo(app, U)
     -- départ de votre setup ou du setup par défaut : la version proposée s'annonce
     info.kind, info.pending = kind, pending
     local g = pending.gain or 0
-    info.summary = (g >= 0 and '-' or '+') .. Util.fmt(math.abs(g), 3) .. ' s'
+    info.summary = X.U.gainText(g)
     info.summaryColor = g >= 0 and c.go or c.danger
     if pending.ready == false then
       info.state, info.stateColor = L.f('v%s en préparation', pending.version), c.warn
@@ -3006,11 +3027,13 @@ local function overlayBody(app, U, info, W, top, H)
     local s = L.t('Dernier tour') .. ' ' .. X.U.lapTime(last.time)
     local color = c.soft
     if not last.valid then
-      s = s .. ' · ' .. L.t('non compté') .. ' (' .. L.t(tostring(last.reason or 'non valide')) .. ')'
+      s = s .. ' · ' .. (last.acValid and L.f('hors analyse (%s) · compté au chrono d\'AC', L.t(tostring(last.reason or 'non valide')))
+        or (L.t('non compté') .. ' (' .. L.t(tostring(last.reason or 'non valide')) .. ')'))
       color = c.warn
     elseif tMine and last.family == e.family then
       local delta = last.time - tMine
-      s = s .. ' (' .. (math.abs(delta) < 0.0005 and L.t('votre meilleur') or (delta >= 0 and '+' or '-') .. Util.fmt(math.abs(delta), 3))
+      local same = math.abs(delta) < K.lapTimeEps
+      s = s .. ' (' .. (same and L.t('votre meilleur') or (delta >= 0 and '+' or '-') .. Util.fmt(math.abs(delta), 3))
         .. ')'
     end
     text('text', 11.5, fitted('text', 11.5, s, W - 28), px, cy, color)
@@ -3027,7 +3050,7 @@ local function overlayBody(app, U, info, W, top, H)
   if pending and pending ~= e then
     rect(px, cy + 2, W - 14, cy + 3, c.line)
     local g = pending.gain or 0
-    local gs = (g >= 0 and '-' or '+') .. Util.fmt(math.abs(g), 3) .. ' s'
+    local gs = X.U.gainText(g)
     if pending.ready == false then
       local f = U.realLaps(app, pending.originFamily, pending.bucket)
       local n = f and f.count or 0
@@ -3054,7 +3077,7 @@ local function overlayPending(app, U, info, W, top, H)
   local c, p = X.c, info.pending
   local px, cy = 14, top + 10
   local g = p.gain or 0
-  local gs = (g >= 0 and '-' or '+') .. Util.fmt(math.abs(g), 3) .. ' s'
+  local gs = X.U.gainText(g)
   if p.ready == false then
     local s = up(L.f('v%s en préparation', p.version))
     text('display', 22, fitted('display', 22, s, W - 28), px, cy, c.warn)

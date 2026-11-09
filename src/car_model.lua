@@ -21,7 +21,7 @@ local K = Config.K
 local M = {}
 
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
-local G = 9.80665
+local G = Util.G
 local P_ATM_PSI = 14.696
 
 -- ---------------------------------------------------------------------------
@@ -131,6 +131,61 @@ end
 -- mouillée.
 function M.isWetCompound(c)
   return (c.use or M.compoundUse(c)) ~= 'sec'
+end
+
+-- Pneus de qualification (règle de Vincent du 09/11/2026 : « pour une qualification on met toujours soit du supersoft et
+-- s'il n'y a pas de supersoft on met du soft » ; hypersoft et ultrasoft « tous pris en compte ») : sur piste sèche, le plus
+-- tendre de la gamme du composé monté (K.tyreSoftLevels), reconnu par son nom (anglais ou français) ou son nom court. Gamme :
+-- le nom sans ses mots de dureté (K.tyreHardnessWords) ; les composés de pluie n'y entrent jamais.
+local function compoundWords(c)
+  local name = tostring(c.name or ''):lower():gsub('[%p]', ' '):gsub('%s+', ' ')
+  return ' ' .. name .. ' '
+end
+
+-- Rang de tendreté d'un composé (1 : le plus tendre), ou nil.
+function M.compoundSoftness(c)
+  local n = compoundWords(c)
+  local short = tostring(c.short or ''):upper():gsub('%s', '')
+  for rank, level in ipairs(K.tyreSoftLevels) do
+    if short == level.short then return rank end
+    for _, w in ipairs(level.words) do
+      if n:find(' ' .. w .. ' ') then return rank end
+    end
+  end
+  return nil
+end
+
+-- Gamme d'un composé : son nom sans les mots de dureté.
+function M.compoundRange(c)
+  local n = compoundWords(c)
+  for _, w in ipairs(K.tyreHardnessWords) do
+    local pattern = ' ' .. w .. ' '
+    while n:find(pattern) do n = n:gsub(pattern, ' ', 1) end
+  end
+  return (n:gsub('%s+', ' '):gsub('^ ', ''):gsub(' $', ''))
+end
+
+-- Le plus tendre de la gamme du composé monté (index CSP currentIndex) : son index CSP et le composé, ou nil (aucun pneu
+-- tendre reconnu ; composé monté de pluie et plusieurs gammes sèches : laquelle ?).
+function M.softestCompound(base, currentIndex)
+  local compounds = base and base.compounds or {}
+  local current = nil
+  for _, c in ipairs(compounds) do
+    if c.index == currentIndex then current = c end
+  end
+  local range = current and not M.isWetCompound(current) and M.compoundRange(current) or nil
+  local best, bestRank, ranges, count = nil, math.huge, {}, 0
+  for _, c in ipairs(compounds) do
+    if not M.isWetCompound(c) and (range == nil or M.compoundRange(c) == range) then
+      local r = M.compoundRange(c)
+      if not ranges[r] then ranges[r], count = true, count + 1 end
+      local rank = M.compoundSoftness(c)
+      if rank and rank < bestRank then best, bestRank = c, rank end
+    end
+  end
+  if range == nil and count > 1 then return nil end
+  if best == nil then return nil end
+  return best.index, best
 end
 
 -- Comportement d'un pneu dans l'eau (H25, H26, H28) : classe (slick, treaded : à rainures, rain : pluie)
@@ -343,7 +398,8 @@ function M.build(car, state, tick)
   if totalMass then
     p.massDry = source(src, 'massDry', totalMass, 'file')
   elseif values.mass and values.fuel then
-    p.massDry = source(src, 'massDry', values.mass - values.fuel * K.fuelDensity, 'measured')
+    -- masse de CSP : lest compris (ajouté ensuite à part)
+    p.massDry = source(src, 'massDry', values.mass - values.fuel * K.fuelDensity - (values.ballast or 0), 'measured')
   else
     missing[#missing + 1] = 'masse'
   end
@@ -471,7 +527,7 @@ function M.fromParams(p)
   p.limiter = p.limiter or 7000
   p.rpmMin = p.rpmMin or 1000
   p.final = p.final or 3.5
-  p.brakeFront = Util.clamp(p.brakeFront or 0.6, 0.3, 0.9)
+  p.brakeFront = Util.clamp(p.brakeFront or 0.6, K.brakeBiasMin, K.brakeBiasMax)
   p.fuelDefault = p.fuelDefault or 30
   p.fuelMax = p.fuelMax or 100
   p.rideHeightF = p.rideHeightF or K.defaultRideHeightF
@@ -1060,20 +1116,8 @@ local function gearForce(eff, g, v)
   return engineTorque(eff, min(rpm, eff.limiter)) * total * K.drivetrainEfficiency * eff.factors.power / eff.wheelRadius
 end
 
--- Force motrice maximale à la vitesse exacte v (meilleur rapport sous son limiteur).
-local function envelopeForce(eff, v)
-  local best = 0
-  for g = 1, eff.gearCount do
-    if v <= eff.gearVmax[g] then
-      local f = gearForce(eff, g, v)
-      if f > best then best = f end
-    end
-  end
-  return best
-end
-
--- Vitesse de pointe : force motrice (au régime exact) = traînée + roulement, par dichotomie dans le
--- premier intervalle de la table où l'accélération devient nulle.
+-- Vitesse de pointe : force motrice = traînée + roulement, par dichotomie dans le premier intervalle de la table où
+-- l'accélération devient nulle (force et traînée interpolées dans la même table, relecture du 09/11/2026).
 local function topSpeedOf(eff, drag, rr0, rr1)
   local dv, count, force = eff.dv, eff.speedCount, eff.force
   for i = 2, count do
@@ -1083,7 +1127,7 @@ local function topSpeedOf(eff, drag, rr0, rr1)
         local v = 0.5 * (lo + hi)
         local t = (v - (i - 2) * dv) / dv
         local resist = drag[i - 1] + (drag[i] - drag[i - 1]) * t + rr0 + rr1 * v * v
-        if envelopeForce(eff, v) > resist then lo = v else hi = v end
+        if force[i - 1] + (force[i] - force[i - 1]) * t > resist then lo = v else hi = v end
       end
       return lo
     end
@@ -1132,7 +1176,7 @@ function M.configure(base, setup, conditions, tick, reuse)
   eff.torque, eff.rpmMin, eff.limiter = base.torque, base.rpmMin, base.limiter * (setup.limiterPct or 1)
   eff.turbos, eff.gears, eff.gearCount, eff.final = base.turbos, setup.gears, #setup.gears, setup.final
   eff.shiftUpTime = base.shiftUpTime
-  eff.brakeBias = Util.clamp(setup.brakeBias, 0.3, 0.95)
+  eff.brakeBias = Util.clamp(setup.brakeBias, K.brakeBiasMin, K.brakeBiasMax)
   eff.diffPower, eff.diffCoast = Util.clamp(setup.diffPower, 0, 1), Util.clamp(setup.diffCoast, 0, 1)
   eff.diffPreload = max(0, setup.diffPreload or 0)
   -- H20 : moment de lacet du différentiel bloqué, ramené à la marge latérale de l'avant : force motrice
@@ -1146,7 +1190,7 @@ function M.configure(base, setup, conditions, tick, reuse)
   eff.wheelRadius = (eff.traction == 'FWD' and compound.front.radius or compound.rear.radius)
   -- grip de la piste hors de 0,5…1,1 : valeur aberrante, 1 pris à la place (relecture du 29/10/2026)
   local roadGrip = Util.finiteOr(conditions.roadGrip, 1)
-  if roadGrip < 0.5 or roadGrip > 1.1 then roadGrip = 1 end
+  if roadGrip < K.roadGripMin or roadGrip > K.roadGripMax then roadGrip = 1 end
   local grip = roadGrip * Util.finiteOr(conditions.surfaceGrip, 1) * factors.mu
     * (1 + Util.finiteOr(conditions.driverMargin, 0))
   -- pression à chaud de chaque essieu : mesurée (calibration), sinon déduite de la pression à froid

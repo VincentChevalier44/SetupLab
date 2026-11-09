@@ -138,6 +138,7 @@ tests['LR02 pluie : niveaux d\'aide refusés puis « Valider » : version gardé
   app.handleIntents({ rediscover = true })
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end))
   h.sim.rainWetness, h.sim.rainWater = 1, 0.6
+  Fake.settleConditions(h, app)
   app.nextContextAt = 0
   frames(h, 2)
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end))

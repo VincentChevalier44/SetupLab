@@ -1123,6 +1123,17 @@ function F.new(opts)
 end
 
 -- Installe l'hôte comme globales CSP (pour charger SetupLab.lua tel quel).
+-- Piste mouillée ou séchée en cours de séance (choix de Vincent du 09/11/2026) : l'état ne bascule que s'il tient
+-- K.wetHoldSeconds ; deux relectures du contexte séparées de plus que ce délai.
+function F.settleConditions(h, app)
+  local hold = require('src/config').K.wetHoldSeconds
+  for _ = 1, 2 do
+    h.sim.time = h.sim.time + (hold + 1) * 1000
+    app.nextContextAt = 0
+    script.SETUPLAB__UPDATE(1 / 60)
+  end
+end
+
 function F.install(h)
   rawset(_G, 'ac', h.ac)
   -- réseau : seulement si le test en donne un (mise à jour en jeu) ; sinon absent, comme hors ligne
