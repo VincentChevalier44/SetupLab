@@ -306,6 +306,19 @@ end
 -- Temps officiel : retenu s'il recoupe l'une des références relevées au passage de la ligne.
 local function resolvePending(rec, car, now)
   local p = rec.pending
+  -- verdict d'AdvancedIA sur ce tour (publié au plus 0,5 s après la ligne) : attendu jusqu'à p.verdictBy ; au-delà, ou
+  -- AdvancedIA arrêté entre-temps, le tour est jugé sans lui
+  if p.verdict then
+    local clean = p.verdict(p.lap.lapCount)
+    if clean == false then
+      p.lap.reason = p.lap.reason or M.NEUTRAL_REASON
+      p.verdict = nil
+    elseif clean == true or now >= p.verdictBy or now < p.verdictFrom then
+      p.verdict = nil
+    else
+      return nil
+    end
+  end
   local ms = num(car, 'previousLapTimeMs')
   local official = ms and ms > 0 and ms / 1000 or nil
   -- temps officiel encore celui du tour précédent (relevé en plein tour : AC le publie en retard) : attendu jusqu'à
@@ -437,7 +450,12 @@ M.RACE_INCIDENTS = { ['choc (dégâts)'] = true, ['coupe de piste'] = true, ['t�
 
 -- Raisons de rejet propres à l'analyse de SetupLab : AC compte ces tours (temps officiel, même setup) ; ils restent dans
 -- le meilleur tour d'AC de leur famille (f.acBest). Les incidents de pilotage, plus le trafic et trois autres raisons.
-M.QUALITY_REASONS = { [M.TRAFFIC_REASON] = true, ['sortie de piste'] = true,
+-- Tour neutralisé ou pénalisé selon AdvancedIA (1.5.12, décision de Vincent du 12/11/2026) : voiture de sécurité, VSC,
+-- FCY, drapeau rouge, double jaune, delta ou pénalité de ralentissement. Compté au chrono d'AC seulement : ni calibration,
+-- ni rythme de course, ni consommation, ni usure (un tour sous neutralisation consomme et use moins).
+M.NEUTRAL_REASON = 'tour neutralisé ou pénalisé (AdvancedIA)'
+
+M.QUALITY_REASONS = { [M.NEUTRAL_REASON] = true, [M.TRAFFIC_REASON] = true, ['sortie de piste'] = true,
   ['répartition de freinage modifiée en roulant'] = true, ['mémoire pleine'] = true }
 for reason in pairs(M.RACE_INCIDENTS) do M.QUALITY_REASONS[reason] = true end
 
@@ -454,8 +472,9 @@ local function traffic(rec, host, p, context)
   local near = false
   for i = 1, min(floor(count) - 1, K.trafficMaxCars) do
     local ok, other = call(getCar, i)
+    -- AdvancedIA en marche (1.5.12) : voiture arrêtée ou hors de la piste selon lui ignorée (context.carIdle)
     if ok and other ~= nil and bool(other, 'isConnected') ~= false and bool(other, 'isActive') ~= false
-        and bool(other, 'isInPitlane') ~= true then
+        and bool(other, 'isInPitlane') ~= true and not (context.carIdle and context.carIdle(i)) then
       local q = num(other, 'splinePosition')
       if q then
         local d = q - p
@@ -515,8 +534,10 @@ function M.update(rec, host, now, signatureFn, context)
       if rec.lapTimeRef then references[#references + 1] = rec.lapTimeRef / 1000 end
       if rec.lapTimePeak then references[#references + 1] = rec.lapTimePeak / 1000 end
       if rec.startTime then references[#references + 1] = now - rec.startTime end
-      rec.pending = { lap = lap, references = references, deadline = now + K.recorderTimeWait, staleMs = rec.officialMid,
-        frameDt = frameDt }
+      -- AdvancedIA en marche : son verdict sur le tour est attendu aussi (échéance du temps officiel prolongée d'autant)
+      local wait = context.lapVerdict and max(K.recorderTimeWait, K.companionLapWait) or K.recorderTimeWait
+      rec.pending = { lap = lap, references = references, deadline = now + wait, staleMs = rec.officialMid,
+        frameDt = frameDt, verdict = context.lapVerdict, verdictFrom = now, verdictBy = now + K.companionLapWait }
     end
     startLap(rec, signature, lapCount, now, family)
     crossed = true

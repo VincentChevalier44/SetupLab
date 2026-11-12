@@ -1042,7 +1042,9 @@ local function refreshContext()
   elseif wet.seen and K.wetHoldSeconds > 0 then
     -- horloge revenue en arrière (séance recommencée) : le compte repart
     if wet.pending ~= want or app.now < wet.pendingSince then wet.pending, wet.pendingSince = want, app.now end
-    if app.now - wet.pendingSince < K.wetHoldSeconds then want = nil end
+    -- AdvancedIA en marche (1.5.12) et du même avis sur la piste : bascule sans attendre ; sinon, attente habituelle
+    local confirmed = app.companionUsing == true and app.Companion.wet(app.companion) == (want == 'pluie')
+    if app.now - wet.pendingSince < K.wetHoldSeconds and not confirmed then want = nil end
   end
   wet.seen = true
   if want == 'pluie' then
@@ -1621,6 +1623,121 @@ function app.fpsSlow(fps)
   return Util.isFinite(avg) and fps < avg * K.fpsDropRatio or false
 end
 
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Apps compagnes (1.5.12, demande de Vincent du 12/11/2026) : AdvancedIA lu s'il est installé et en marche, SetupLab.state
+-- publié pour SpotterEnginer. Sans elles, rien ne change. Fil principal seulement (src/companion.lua).
+app.Companion = require('src/companion')
+app.companion = app.Companion.new()
+app.companionTrial = { version = nil, laps = 0, tid = 0 }
+
+function app.companionVerdict(lapId) return app.Companion.lapVerdict(app.companion, lapId) end
+function app.companionCarIdle(index) return app.Companion.carIdle(app.companion, index) end
+
+-- Réglage d'une version (genre de cran) -> mot du contrat SetupLab.state (tch) ; absent : « - ».
+app.companionChangeWord = { wing = 'aero', spring = 'springs', heave = 'springs', damperSlow = 'dampers',
+  damperFast = 'dampers', heaveDamper = 'dampers', arb = 'arb', rod = 'height', camber = 'alignment', toe = 'alignment',
+  pressure = 'pressure', diffPower = 'diff', diffCoast = 'diff', diffPreload = 'diff', brakeBias = 'brakes',
+  brakePower = 'brakes', gear = 'gears', final = 'gears', fuel = 'fuel' }
+
+-- Nom court d'un composé (index CSP) de la voiture découverte, ou nil.
+function app.compoundShort(index)
+  local d = app.discovery
+  for _, c in ipairs(d and d.carBase and d.carBase.compounds or {}) do
+    if c.index == index then return c.short or c.name end
+  end
+  return nil
+end
+
+-- Valeurs de SetupLab.state (contrat v1 avec SpotterEnginer) : setup en place reconnu par SetupLab, plan de course,
+-- pressions à chaud visées, état de l'affinage, verdict des tours d'essai.
+function app.companionState()
+  local s = { kind = 'none', stamp = app.now, tv = '-', tch = '-' }
+  local r = app.refine
+  local kind = (r and r.active and r.kind) or app.lastLoadKind
+  if kind ~= 'quali' and kind ~= 'race' then return s end
+  s.kind = kind
+  local rr = app.refines[kind]
+  local e, last = nil, nil
+  for _, x in ipairs(rr and rr.history or {}) do
+    if x.version then
+      last = x
+      if x.version == rr.driven then e = x end
+    end
+  end
+  if e then s.ver = (e.status == 'validée' and 'v' or 'e') .. e.version end
+  local q = app[kind]
+  local view = (e and e.view) or (q and q.state == 'done' and q.result) or nil
+  if view then
+    local t = view.tyres or {}
+    s.hotF, s.hotR = t.F and t.F.hotProposed, t.R and t.R.hotProposed
+    local info = view.race
+    if info then s.fuel, s.fpl, s.stint, s.stops = info.fuelStart, info.fuelPerLap, info.stintLaps, info.stops end
+  end
+  local d = app.discovery
+  s.compound = d and app.compoundShort(d.compoundIndex)
+  s.pitc = app.pitCompoundSet and app.compoundShort(app.pitCompoundSet)
+  s.readyN = rr and rr.version or 0
+  if rr and rr.active then
+    s.tune = (last and last.version ~= rr.driven and last.status ~= 'écartée' and last.status ~= 'validée') and 'ready'
+      or 'running'
+  end
+  -- verdict sur les tours de l'essai en place (mêmes temps que l'interface : Ui.versionModel)
+  local trial = app.companionTrial
+  if e and e.status ~= 'validée' and e.status ~= 'écartée' then
+    local m = Ui.versionModel(app, rr, e, kind, '')
+    local mine, before = m.mine and m.mine.count or 0, m.before and m.before.count or 0
+    s.tlap = mine
+    if Util.isFinite(m.realGain) then s.tdl = -m.realGain end
+    if mine < 2 or before < 2 or not Util.isFinite(m.realGain) then
+      s.tv = 'wait'
+    elseif math.abs(m.realGain) <= K.validateTolAbs then
+      s.tv = 'same'
+    else
+      s.tv = m.realGain > 0 and 'better' or 'worse'
+    end
+    local best, bestGain = nil, 0
+    for _, c in ipairs(e.changeList or {}) do
+      local gain = c.contribution or 0
+      if c.var and gain > bestGain then best, bestGain = c.var.kind, gain end
+    end
+    s.tch = best and app.companionChangeWord[best] or '-'
+    if trial.version ~= e.version then
+      trial.version, trial.laps = e.version, 0
+    end
+    if mine > trial.laps then trial.tid, trial.laps = trial.tid + (mine - trial.laps), mine end
+  end
+  s.tid = trial.tid
+  return s
+end
+
+-- Une image : liaison avec AdvancedIA (ouverte une fois), contexte de l'enregistreur, publication de SetupLab.state.
+function app.companionTick()
+  local C, c = app.Companion, app.companion
+  if not c.opened then
+    C.detect(c, host)
+    C.open(c, host)
+    if c.installed then
+      log('INFO', 'companion', 'AdvancedIA installé (' .. tostring(c.release) .. ') : pont '
+        .. (c.hello and 'ouvert' or ('non ouvert : ' .. tostring(c.reason))))
+    end
+  end
+  -- horloge réelle lue seulement avec le pont ouvert (sans AdvancedIA, rien de plus dans la frame)
+  local wall = c.hello and app.clock and app.clock() or app.now
+  if C.step(c, host, wall) and c.installed then
+    log('INFO', 'companion', 'AdvancedIA : ' .. c.state .. (c.reason ~= '' and (' (' .. c.reason .. ')') or ''))
+  end
+  local use = app.settings.companionUse == true and C.connected(c)
+  app.companionUsing = use
+  local rc = app.recordContext
+  rc.lapVerdict = use and app.companionVerdict or nil
+  rc.carIdle = use and app.companionCarIdle or nil
+  -- SetupLab.state : recomposé au plus une fois par seconde, écrit seulement si une valeur change (jamais en mode inerte)
+  if not app.inert and (app.now >= (app.companionStateAt or 0) or app.now < (app.companionStateAt or 0) - 2) then
+    app.companionStateAt = app.now + K.companionStatePeriod
+    C.publish(c, host, C.stateText(app.companionState()))
+  end
+end
+
 local function update(dt)
   app.frameNo = (app.frameNo or 0) + 1
   if not app.settings.enabled then return end
@@ -1643,6 +1760,7 @@ local function update(dt)
     -- rien n'est écrit en replay ni en pause en ligne (I09) ; le mode en ligne s'écrit à part, tout de suite
     if not app.inert then app.storeFlush() end
   end
+  app.companionTick()
   if okSim and not inertNow(sim) then
     app.recordContext.paused = Util.get(sim, 'isPaused') == true
     recordFrame()
@@ -1694,6 +1812,11 @@ local function update(dt)
   if slowNow and not (raceSession() and raceOver()) then
     budget, quota = budget * K.slowFpsSliceFactor, math.max(1, math.floor(quota * K.slowFpsSliceFactor))
     app.perf.slowFrames = app.perf.slowFrames + 1
+  end
+  -- AdvancedIA en marche (1.5.12) : son coût par image au-delà de K.companionCostFreeMs est laissé libre
+  local aiaCost = app.companionUsing and app.Companion.costMs(app.companion) or nil
+  if aiaCost and aiaCost > K.companionCostFreeMs then
+    budget = math.max(K.sliceMinMs / 1000, budget - (aiaCost - K.companionCostFreeMs) / 1000)
   end
   -- travail déjà fait dans cette frame (contexte, stockage, fin de tour) retiré de la tranche : la frame
   -- du passage de ligne reste dans son budget (§14.3). Le résultat ne dépend pas du découpage (Q11).
@@ -1995,6 +2118,10 @@ local function startCompute(kind, fromPending)
     for key, value in pairs(app.settings) do settings[key] = value end
     -- course : nombre de tours saisi pour ce circuit (garde de course)
     if kind == 'race' and Util.isFinite(app.raceLaps) then settings.raceLaps, settings.raceMinutes = app.raceLaps, 0 end
+    -- règles de course d'AdvancedIA en marche (1.5.12) : arrêts obligatoires, relais maximal ; DRS coupé par la règle
+    local rules = app.companionUsing and app.Companion.rules(app.companion) or nil
+    if kind == 'race' and rules then settings.ruleStops, settings.ruleMaxStintMin = rules.stops, rules.maxStintMin end
+    q.drsBlocked = app.companionUsing and app.Companion.drsAllowed(app.companion) == false or nil
     -- aides au pilotage (règle pluie, D16 amendé) : niveaux du fichier de setup du calcul, aides du jeu
     local file = d.setup and d.setup.file
     local aids = SetupSpace.aidsPlan(d.carBase.aids, {
@@ -2057,7 +2184,7 @@ local function startCompute(kind, fromPending)
       settings = settings, fuelPerLap = d.carState.ok and d.carState.values.fuelPerLap or nil, budget = budget,
       fuelNow = d.carState.ok and d.carState.values.fuel or nil,
       compound = d.compoundSlot, compoundChoice = settings.compoundChoice, factorsByCompound = usableFactors(conditions.bucket),
-      race = kind == 'race' and raceMeasures(d, conditions.bucket) or nil, drs = d.drs and d.drs.enabled,
+      race = kind == 'race' and raceMeasures(d, conditions.bucket) or nil, drs = d.drs and d.drs.enabled and not q.drsBlocked,
       tyres = tyreStateOf(d, conditions.bucket),
       absActive = absActive, ers = d.ers and d.ers.enabled, pinned = pinned,
     }
@@ -3015,10 +3142,40 @@ end
 
 -- Stratégie d'arrêt d'un setup de course chargé par SetupLab, valeurs constatées dans la voiture (chargement vérifié, ou
 -- setup déjà en place) : note sur sa ligne dans l'onglet COURSE et dans le rapport J0 ; avertissement au journal sinon.
+-- Changement de gomme obligatoire (règle d'AdvancedIA en marche, 1.5.12, décision de Vincent du 12/11/2026) : le preset
+-- d'arrêt prend le meilleur composé permis différent du composé monté (comparaison du dernier calcul de course, sinon
+-- ordre des composés de la voiture). Renvoie les valeurs à écrire (copie si le composé change).
+function app.companionPitTarget(target)
+  if not app.companionUsing then return target end
+  local rules = app.Companion.rules(app.companion)
+  if not (rules and rules.compoundChange) or type(target.TYRES) ~= 'number' then return target end
+  local q = app.race
+  local comparison = q and q.state == 'done' and q.result and q.result.compound and q.result.compound.comparison or nil
+  local indices, d = {}, app.discovery
+  for _, c in ipairs(d and d.carBase and d.carBase.compounds or {}) do
+    if app.wet.state == 'pluie' or not CarModel.isWetCompound(c) then indices[#indices + 1] = c.index end
+  end
+  local pick = app.Companion.pitCompound(target.TYRES, rules.allowed, comparison, indices)
+  if pick == nil then
+    log('WARN', 'pit', 'Changement de gomme obligatoire (AdvancedIA) : aucun autre composé permis')
+    return target
+  end
+  local copy = {}
+  for k, v in pairs(target) do copy[k] = v end
+  copy.TYRES = pick
+  log('INFO', 'pit', 'Changement de gomme obligatoire (AdvancedIA) : composé ' .. tostring(app.compoundShort(pick) or pick)
+    .. ' dans le preset d\'arrêt')
+  return copy
+end
+
 local function applyPit(check)
   if check.kind ~= 'race' then return end
   local file = tostring(check.path):match('[^/\\]+$')
-  local res, why = Exporter.applyPitStrategy(host, check.target)
+  local res, why = Exporter.applyPitStrategy(host, app.companionPitTarget(check.target))
+  app.pitCompoundSet = nil
+  for _, e in ipairs(res and res.done or {}) do
+    if e.kind == 'compound' then app.pitCompoundSet = e.value end
+  end
   local note, ok = pitStrategyNote(res, why, file)
   app.pitStrategy = { result = res, reason = why, note = note, ok = ok, seen = res and res.seen, file = file }
   log(ok and 'INFO' or 'WARN', 'pit', note .. ((res and #res.seen > 0) and (' Menu d\'arrêt : ' .. table.concat(res.seen, ', '))

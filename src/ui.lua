@@ -783,6 +783,15 @@ local function raceLines(host, r, palette)
   ui.textWrapped('Carburant : ' .. Util.fmt(race.fuelFrom, 0) .. ' -> ' .. Util.fmt(race.fuelStart, 0) .. ' L ('
     .. Util.fmt(race.fuelPerLap, 2) .. ' L/tour, source ' .. race.fuelSource .. ', marge ' .. Util.fmt(race.margin * 100, 0) .. ' %)')
   if race.fuelNote then wrapped(host, race.fuelNote, palette.pending) end
+  -- règles de course d'AdvancedIA (1.5.12), seulement quand elles s'appliquent
+  if race.rules then
+    local parts = {}
+    if race.rules.stops then parts[#parts + 1] = L.f('%s arrêt(s) obligatoire(s)', race.rules.stops) end
+    if race.rules.maxStintMin then
+      parts[#parts + 1] = L.f('relais de %s min au plus', Util.fmt(race.rules.maxStintMin, 0))
+    end
+    wrapped(host, L.t('Règles') .. ' AdvancedIA : ' .. table.concat(parts, ' · '), palette.text)
+  end
   wrapped(host, 'Usure : ' .. Util.fmt(race.kmPerLapF, 2) .. ' / ' .. Util.fmt(race.kmPerLapR, 2) .. ' km virtuels par tour (avant / '
     .. 'arrière, ' .. race.kmSource .. ') ; température des pneus : ' .. race.tyreTemp,
     palette[race.kmSource == 'mesure' and 'na' or 'pending'])
@@ -2089,6 +2098,11 @@ end
 -- (la colle valide, applique et enregistre).
 M.EDITABLE = Config.EDITABLE
 
+-- AdvancedIA installé ou en marche (1.5.12) : ses réglages et son état s'affichent ; sinon rien.
+function M.companionShown(app)
+  return app.companion ~= nil and app.companion.detected == true
+end
+
 -- Choix de la langue (décision de Vincent du 26/10/2026 : anglais par défaut, français au choix).
 local LANGUAGES = { { 'en', 'English' }, { 'fr', 'Français' } }
 local function languageButtons(host, app, intents, palette, short)
@@ -2131,7 +2145,10 @@ local function settingsEditor(host, app, intents, palette)
   end)
   section(host, 'Réglages de l\'app (conservés d\'une séance à l\'autre)', 'app_settings', true, function()
     for _, key in ipairs(M.EDITABLE) do
-      if key ~= 'language' and not PROPOSAL[key] then settingWidget(host, app, intents, key) end
+      -- AdvancedIA : réglage affiché seulement s'il est installé (sinon SetupLab reste telle quelle)
+      if key ~= 'language' and not PROPOSAL[key] and (key ~= 'companionUse' or M.companionShown(app)) then
+        settingWidget(host, app, intents, key)
+      end
     end
   end)
 end

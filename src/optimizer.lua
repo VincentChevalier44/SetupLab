@@ -992,6 +992,25 @@ local function finitePositive(x)
   return Util.isFinite(x) and x > 0
 end
 
+-- Relais maximal imposé par les règles d'AdvancedIA (1.5.12) : arrêts obligatoires (settings.ruleStops), durée
+-- maximale d'un relais (settings.ruleMaxStintMin, au tour prévu). Renvoie le plafond (laps sans règle) et les règles
+-- appliquées ({ stops, maxStintMin }, nil sans règle).
+function M.ruleStintCap(laps, settings, lapTime)
+  local cap, rules = laps, nil
+  local stops = settings.ruleStops
+  if Util.isFinite(stops) and stops >= 1 then
+    cap = min(cap, max(1, math.ceil(laps / (floor(stops) + 1))))
+    rules = { stops = floor(stops) }
+  end
+  local minutes = settings.ruleMaxStintMin
+  if Util.isFinite(minutes) and minutes > 0 and Util.isFinite(lapTime) and lapTime > 0 then
+    cap = min(cap, max(1, floor(minutes * 60 / lapTime)))
+    rules = rules or {}
+    rules.maxStintMin = minutes
+  end
+  return cap, rules
+end
+
 -- Plan du relais et carburant de course (§10.6).
 -- Consommation par tour : mesurée sur un tour du setup de référence, sinon CSP, sinon modèle (marge
 -- supplémentaire) ; jamais sous la valeur CSP ; bornée (D11). Inconnue : carburant actuel conservé.
@@ -1017,16 +1036,18 @@ local function racePlan(p, lapTime, modelPerLap)
   local var = args.space.byKey.fuel
   local current = p.setup.fuel
   local need = perLap and perLap * (1 + margin) or 0
-  local stintLaps = laps
+  -- règles de course d'AdvancedIA (1.5.12) : relais plafonné par les arrêts obligatoires et la durée maximale d'un relais
+  local cap, rules = M.ruleStintCap(laps, args.settings, lapTime)
+  local stintLaps = cap
   local fuelDelta, fuelStart, note = nil, current, nil
   if perLap == nil then
     note = 'consommation inconnue : carburant actuel conservé (rouler un tour pour la mesurer)'
   elseif var == nil then
-    if need > 0 then stintLaps = Util.clamp(floor(current / need), 1, laps) end
+    if need > 0 then stintLaps = Util.clamp(floor(current / need), 1, cap) end
     note = 'carburant non réglable dans le setup : ' .. Util.fmt(laps * need, 1) .. ' L nécessaires'
   else
     local tank = Space.physical(var, var.rangeHi)
-    if need > 0 and tank and tank > 0 then stintLaps = Util.clamp(floor(tank / need), 1, laps) end
+    if need > 0 and tank and tank > 0 then stintLaps = Util.clamp(floor(tank / need), 1, cap) end
     local target = stintLaps * need
     if source == 'modèle' and current and current > target then
       target = current
@@ -1052,7 +1073,7 @@ local function racePlan(p, lapTime, modelPerLap)
     lapTime = lapTime, fuelStart = fuelStart, fuelDelta = fuelDelta, fuelPerLap = perLap, fuelSource = source or 'inconnue',
     fuelNote = note, margin = margin, kmPerLapF = kmF, kmPerLapR = kmR, kmSource = kmSource,
     trafficFraction = plan.trafficFraction, slipstream = slip, tyreTemp = 'plateau de la courbe de performance (A19)',
-    drs = p.drs,
+    drs = p.drs, rules = rules,
   }
   return plan, info
 end

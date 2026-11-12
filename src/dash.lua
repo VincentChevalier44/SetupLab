@@ -1943,7 +1943,9 @@ local function stintPanel(r, x, y, w, dry)
   if race == nil then return 0 end
   local c = X.c
   local chartH = (s and s.laps and #s.laps > 1) and 60 or 0
-  local h = 14 + 16 + chartH + 10 + 3 * 18 + 12
+  -- règles de course d'AdvancedIA (1.5.12) : une ligne, seulement quand elles s'appliquent
+  local rules = race.rules
+  local h = 14 + 16 + chartH + 10 + 3 * 18 + 12 + (rules and 18 or 0)
   if dry then return h end
   panel(x, y, x + w, y + h)
   local px, pw = x + 14, w - 28
@@ -1982,6 +1984,12 @@ local function stintPanel(r, x, y, w, dry)
     .. ' L/' .. L.t('tour') .. ' · ' .. L.t('marge') .. ' ' .. Util.fmt(race.margin * 100, 0) .. ' %')
   row('Usure', Util.fmt(race.kmPerLapF, 2) .. ' / ' .. Util.fmt(race.kmPerLapR, 2) .. ' ' .. L.t('km virtuels par tour') .. ' ('
     .. L.t(race.kmSource) .. ')', race.kmSource == 'mesure' and c.light or c.warn)
+  if rules then
+    local parts = {}
+    if rules.stops then parts[#parts + 1] = L.f('%s arrêt(s) obligatoire(s)', rules.stops) end
+    if rules.maxStintMin then parts[#parts + 1] = L.f('relais de %s min au plus', Util.fmt(rules.maxStintMin, 0)) end
+    row('Règles', 'AdvancedIA · ' .. table.concat(parts, ' · '), c.light)
+  end
   if s then
     row('Équilibre', Util.fmt(s.balanceFirst, 2) .. ' ' .. L.t('au T1') .. ' › ' .. Util.fmt(s.balanceLast, 2) .. ' '
       .. L.f('au T%s', stint) .. ' · ' .. (s.critical and L.f('tour critique %s', s.critical) or L.t('aucun tour critique')),
@@ -2604,6 +2612,8 @@ local function settingsPage(x, y, w)
   local compute = { 'optBudgetEvalsQ', 'optBudgetEvalsC' }
   local strategy = { 'perfStab', 'fuelMarginPct', 'fuelQualiLaps', 'drsTrafficPct', 'driverMarginPct', 'compoundChoice',
     'wetAidLevels', 'calibrationAuto', 'updateCheck', 'onlineActive' }
+  -- AdvancedIA (1.5.12) : réglage affiché seulement s'il est installé
+  if X.U.companionShown(app) then strategy[#strategy + 1] = 'companionUse' end
   local estimate = X.U.estimateSeconds(app, app.settings.optBudgetEvalsQ, X.U.KIND.quali.lapsPerEval, 'quali')
   local dur = estimate and (L.t(app.settings.optBudgetEvalsQ .. X.U.KIND.quali.unit)
     .. L.t((X.U.durationText(estimate, K.computeTargetQ, X.U.slowFrames(app))))) or nil
