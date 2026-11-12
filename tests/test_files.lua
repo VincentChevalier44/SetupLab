@@ -350,7 +350,7 @@ tests['RG05 sûreté : fichier modifié, gardé ou étranger jamais touché ; un
     app.queueFileOp({ op = 'corbeille', name = name, hash = Util.hashString('COPIE ' .. name), why = 'test' })
   end
   -- constat d'un chargement en cours (1.5.3 : plus de chargement armé) : rien
-  app.loadCheck = { kind = 'quali', path = 'x', target = { JAMAIS_DANS_LA_VOITURE = 1 }, frames = 999, backup = '' }
+  app.loadCheck = { kind = 'quali', path = 'x', target = { JAMAIS_DANS_LA_VOITURE = 1 }, deadline = math.huge, backup = '' }
   script.SETUPLAB__UPDATE(1 / 60)
   T.eq(#h.recycled, recycled, 'chargement en cours : rien')
   app.loadCheck = nil

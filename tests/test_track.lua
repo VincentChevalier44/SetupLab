@@ -115,7 +115,6 @@ tests['T01 longueur, pas constant, pas automatique'] = function()
     local total = 0
     for _, seg in ipairs(t.segments) do total = total + seg.length end
     T.near(total, t.length, 1e-6, id .. ' segments = tour complet')
-    T.eq(#t.surf, t.n)
   end
   -- Nordschleife : l'abscisse interne de la ligne IA d'AC dépasse la géométrie de 0,5 % (20 799 m
   -- annoncés pour 20 693 m mesurés) ; la règle ±0,5 % le signale et abaisse la confiance. Le pas

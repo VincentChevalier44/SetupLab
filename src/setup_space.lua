@@ -57,8 +57,8 @@ M.KEPT = {
   electronic = 'conservé : aide électronique, effet non modélisé',
   engineMap = 'conservé : cartographie moteur, courbes par cartographie non lues',
   heaveDamper = 'conservé : amortisseur de pilonnage du setup non relié au modèle (celui du fichier sert, H18)',
-  packer = 'conservé : H16 à confirmer (course avant butée comptée depuis l\'assiette statique ou depuis la détente : '
-    .. 'la course de suspension relevée au stand, rapport J0, tranchera) ; sous H16, aucun effet modélisé',
+  packer = 'conservé : la course avant butée compte dans le modèle (depuis la détente, moins la course relevée au stand, '
+    .. 'H16) ; son réglage n\'est pas optimisé, son effet reste à confirmer en jeu',
   unknown = 'conservé : réglage non reconnu par SetupLab',
 }
 
@@ -224,9 +224,11 @@ function M.build(args)
           problem = 'fichier de rapports illisible ou incohérent'
         end
       end
-      if lockReason then
-        skip(lockReason)
-        if problem == nil then
+      -- cran hors grille (1.5.11) : jamais modifié, mais simulé à sa valeur montée, comme un réglage verrouillé (avant : à la
+      -- valeur d'usine des fichiers de la voiture, calibration et calcul faits sur un autre réglage que le vrai)
+      if lockReason or problem == 'cran actuel hors grille' then
+        skip(lockReason or problem)
+        if problem == nil or problem == 'cran actuel hors grille' then
           local fixed = space.fixedByKey[rule.key]
           if fixed == nil then
             fixed = { key = rule.key, kind = rule.kind, axle = rule.axle, index = rule.index, gear = rule.gear, members = {} }
@@ -527,6 +529,15 @@ function M.verify(space, state, base)
       measured, tol = w and w.angle, K.verifyTolAngle
     elseif var.kind == 'limiter' and base and base.limiter then
       measured, tol = values.rpmLimiter and values.rpmLimiter / base.limiter, K.verifyTolFraction
+    end
+    -- ressorts (1.5.11) : rien à mesurer en jeu, mais une raideur sans commune mesure avec celle de suspensions.ini trahit
+    -- une erreur d'unité du setup.ini d'un mod (N/m au lieu de N/mm : 1 000 fois trop raide) : exclue, raison affichée
+    local fileRate = var.kind == 'spring' and base and base['springFile' .. tostring(var.axle)] or nil
+    if fileRate and fileRate > 0 and predicted and predicted > 0
+        and (predicted / fileRate < K.springUnitRatioMin or predicted / fileRate > K.springUnitRatioMax) then
+      var.status = 'écart'
+      var.reason = 'raideur déduite ' .. Util.fmt(predicted / 1000, 1) .. ' N/mm, suspensions.ini ' .. Util.fmt(fileRate / 1000, 1)
+        .. ' N/mm : unité du setup.ini douteuse, non optimisé'
     end
     if measured ~= nil and predicted ~= nil then
       if abs(measured - predicted) <= tol then

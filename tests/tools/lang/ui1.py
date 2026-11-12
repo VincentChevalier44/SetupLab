@@ -4,7 +4,7 @@ EN = {
     ', durée estimée ≈ %s s': ', estimated duration ≈ %s s',
     "%s : plus de %s s, baisser le budget dans l'onglet Réglages pour aller plus vite":
         '%s: more than %s s, lower the budget in the SETTINGS tab to go faster',
-    '%s (sous %s images/s, la tranche de calcul est réduite)': '%s (below %s fps, the computation slice is reduced)',
+    '%s (images/s en chute, la tranche de calcul est réduite)': '%s (fps dropping, the computation slice is reduced)',
     'Découverte en cours…': 'Discovery in progress…',
     'Découverte interrompue : %s': 'Discovery interrupted: %s',
     'Piste mouillée : setups pluie (humidité %s %, eau %s %).': 'Wet track: wet setups (wetness %s %, water %s %).',
@@ -166,7 +166,6 @@ EN = {
     ' (en piste)': ' (on track)',
     ' — à charger au stand': ' — to load in the pits',
     '%s en essai : %s': '%s on trial: %s',
-    'Étape suivante : gardez ou refusez chaque effet, puis validez.': 'Next step: keep or refuse each effect, then validate.',
     'Étape suivante : la charger au stand (bouton vert ci-dessous) et rouler.': 'Next step: load it in the pits (green button below) and drive.',
     'Valider %s (%s/%s effets)': 'Validate %s (%s/%s effects)',
     'Valider %s': 'Validate %s',

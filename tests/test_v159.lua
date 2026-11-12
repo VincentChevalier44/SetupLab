@@ -323,7 +323,7 @@ tests['IS02 CSP 0.2.11 : INI vides, liste et crans illisibles : texte brut et se
   T.ok(waitFor(h, function() return app.discoveryState == 'done' end), 'découverte')
   local d = app.discovery
   T.eq(d.car.iniStatus['car.ini'], 'ok (texte brut)')
-  T.eq(d.car.dataFilesReason, 'format inattendu (number)')
+  T.eq(d.car.dataFilesReason, 'format inattendu (number 42)')
   T.eq(d.setup.spinnerSource, 'setup.ini')
   T.eq(#d.setup.spinners, #hRef.spinners, 'tous les crans déduits, rapports de boîte compris')
   -- même encodage que les crans de CSP (bornes et valeur)
@@ -385,7 +385,7 @@ tests['IS04 CSP : onglets, menu d\'arrêt et aides renvoyés en objet : lus'] = 
   T.eq(table.concat(Util.listOf(true, proxyOf({ 'a', 'b', 'c' }, 1)), ','), 'a,b,c', 'depuis 1')
   local none, why = Util.listOf(true, 42)
   T.eq(none, nil)
-  T.eq(why, 'format inattendu (number)')
+  T.eq(why, 'format inattendu (number 42)')
   T.eq(select(2, Util.listOf(false, 'absent')), 'absent')
   local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
   -- onglets du menu de setup

@@ -223,6 +223,43 @@ function M.probeStatic(host)
   return r
 end
 
+-- Forme d'une valeur renvoyée par CSP, pour le rapport J0 : type, longueur ou valeur.
+function M.describeValue(v)
+  local kind = type(v)
+  if kind == 'string' then return 'string[' .. #v .. ']' end
+  if kind == 'number' then return 'number ' .. tostring(v) end
+  if kind == 'boolean' or kind == 'nil' then return kind .. (kind == 'boolean' and (' ' .. tostring(v)) or '') end
+  local okN, n = pcall(function() return #v end)
+  return kind .. ((okN and type(n) == 'number') and ('[' .. n .. ']') or '')
+end
+
+-- Sondes de lecture au lancement de l'app (fil principal, hors de l'ordonnanceur) : ce que CSP renvoie pour les lectures
+-- de la découverte (issue n° 2 : en CSP 0.2.11, les mêmes appels faits depuis une coroutine rendaient un nombre ou du vide).
+function M.probeMain(host)
+  local out = {}
+  local function probe(label, fn, ...)
+    local ok, v = Util.call(fn, ...)
+    out[#out + 1] = { label = label, text = ok and M.describeValue(v) or ('erreur : ' .. tostring(v)), value = ok and v or nil }
+    return ok and v or nil
+  end
+  local okId, carId = Util.call(M.resolve(host, 'ac.getCarID'), 0)
+  probe('ac.getCarDataFiles(0)', M.resolve(host, 'ac.getCarDataFiles'), 0)
+  probe('ac.getSetupSpinners()', M.resolve(host, 'ac.getSetupSpinners'))
+  local cfg = probe('ac.INIConfig.carData(0, car.ini)', M.resolve(host, 'ac.INIConfig.carData'), 0, 'car.ini')
+  if cfg ~= nil then
+    local sections = Util.get(cfg, 'sections')
+    local count = 0
+    if type(sections) == 'table' then for _ in pairs(sections) do count = count + 1 end end
+    out[#out + 1] = { label = '  sections de car.ini', text = M.describeValue(sections) .. ', ' .. count .. ' section(s)' }
+  end
+  if okId and Util.isSafeId(carId) then
+    probe('ac.readDataFile(content/cars/…/data/car.ini)', M.resolve(host, 'ac.readDataFile'),
+      'content/cars/' .. carId .. '/data/car.ini')
+  end
+  for _, entry in ipairs(out) do entry.value = nil end
+  return out
+end
+
 -- ---------------------------------------------------------------------------
 -- Évaluation (pure) des résultats de découverte -> liste des capacités
 -- ---------------------------------------------------------------------------
@@ -597,13 +634,19 @@ local function v2s(v, decimals)
   return tostring(v)
 end
 
+-- Chemin du profil Windows remplacé par %USERPROFILE% (« C:\Users\nom », barres dans les deux sens).
+function M.maskProfile(text)
+  return (text:gsub('%a:[\\/][Uu][Ss][Ee][Rr][Ss][\\/][^\\/%c]+', '%%USERPROFILE%%'))
+end
+
 -- tick (facultatif) est appelé toutes les 8 lignes : le rapport se construit en tâche découpée.
 function M.buildReport(info, d, logEntries, tick)
   local lines, size, truncated = {}, 0, false
   local function out(text)
     if truncated then return end
     if tick and #lines % 8 == 7 then tick() end
-    text = tostring(text)
+    -- vie privée : le profil Windows (nom d'utilisateur) masqué, le rapport est souvent collé dans une issue publique
+    text = M.maskProfile(tostring(text))
     if size + #text + 1 > K.maxReportChars then
       truncated = true
       lines[#lines + 1] = '[rapport tronqué]'
@@ -660,6 +703,10 @@ function M.buildReport(info, d, logEntries, tick)
   for name in pairs(static.folders or {}) do folderNames[#folderNames + 1] = name end
   table.sort(folderNames)
   for _, name in ipairs(folderNames) do out('Dossier ' .. name .. ' : ' .. static.folders[name]) end
+  if static.mainProbe and #static.mainProbe > 0 then
+    out("Lectures au lancement de l'app (fil principal) :")
+    for _, entry in ipairs(static.mainProbe) do out('  ' .. entry.label .. ' : ' .. entry.text) end
+  end
 
   if d.car then
     local car = d.car

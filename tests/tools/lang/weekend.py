@@ -38,8 +38,6 @@ EN.update({
     "rejeté (%s) ; compté dans vos temps d'AC": "rejected (%s); counted in your AC times",
     "Meilleur tour d'AC %s s non compté dans vos temps (%s)": "AC best lap %s s not counted in your times (%s)",
     "Meilleur tour d'AC de la séance : %s s": "AC best lap of the session: %s s",
-    "Meilleur tour d'AC de la séance : %s s (un autre tour que celui-ci)":
-        "AC best lap of the session: %s s (another lap than this one)",
     'Pneus de qualification : %s (le plus tendre de la gamme)': 'Qualifying tyres: %s (the softest of the range)',
     '%s État : au stand %s, voie des stands %s, menu de setup %s, séance commencée %s, séance de course %s, vitesse %s km/h':
         '%s State: in the pits %s, pit lane %s, setup menu %s, session started %s, race session %s, speed %s km/h',

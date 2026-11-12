@@ -200,7 +200,8 @@ tests['N05 forces de l\'ERS (H21) et batterie (H22) ; simulation avec masque de 
   local effK = assert(CarModel.configure(w.base, s, { airTemp = 24, roadGrip = 0.98, ersSpec = mguk }))
   local g = 2
   local total = effK.gears[g] * effK.final
-  T.near(effK.ersGearForce[g][11], 200 * total * 0.9 / effK.wheelRadius, 1e-6, 'couple × démultiplication × rendement / rayon')
+  T.near(effK.ersGearForce[g][11], 200 * total * require('src/config').K.drivetrainEfficiency / effK.wheelRadius, 1e-6,
+    'couple × démultiplication × rendement / rayon')
   T.eq(effK.ersFront[11], 0)
   local tK = Sim.run(w.track, effK, nil, { ersMask = one }).time
   PY.note('N05', string.format('MGU-K de 200 N·m en permanence : %.3f s', tK))

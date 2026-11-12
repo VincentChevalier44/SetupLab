@@ -62,7 +62,9 @@ end
 
 -- ffi : pour reconnaître une fonction C de CSP (cdata) comme appelable.
 function M.available(ui, ffi)
-  for _, name in ipairs({ 'dwriteText', 'dwriteTextWrapped', 'dwriteDrawText', 'measureDWriteText', 'invisibleButton',
+  -- dwriteDrawTextClipped (1.5.11) : tout texte à la ligne en dépend (présent dès CSP 0.2.11) ; absent, repli ImGui
+  for _, name in ipairs({ 'dwriteText', 'dwriteTextWrapped', 'dwriteDrawText', 'dwriteDrawTextClipped', 'measureDWriteText',
+    'invisibleButton',
     'itemRectMin', 'itemRectMax', 'itemHovered', 'itemActive', 'drawRectFilled', 'pushDWriteFont', 'popDWriteFont' }) do
     if not Caps.isCallable(Util.get(ui, name), ffi) then return false, name end
   end
@@ -105,14 +107,6 @@ function M.new(real, rgbm, vec2, translate, fontDir)
   function S.popFont()
     stack[#stack] = nil
   end
-  local function withRole(role, fn)
-    real.pushDWriteFont(fonts[role] or fonts.text)
-    local ok, a, b = pcall(fn)
-    real.popDWriteFont()
-    if not ok then error(a, 0) end
-    return a, b
-  end
-  S.withRole = withRole
   -- chemin chaud (chaque texte de chaque image) : appel direct sous la police, sans fermeture créée (S.call pour l'interface)
   local function roleCall(role, fn, ...)
     real.pushDWriteFont(fonts[role] or fonts.text)
@@ -278,23 +272,6 @@ function M.new(real, rgbm, vec2, translate, fontDir)
     return (roleCall('tab', drawCheckbox, translate(visible), id, value))
   end
 
-  local function drawBadge(visible, id)
-    local m = real.measureDWriteText(visible, 11)
-    ps.x, ps.y = m.x + 18, 20
-    local clicked = real.invisibleButton('###' .. id, ps)
-    local hovered = real.itemHovered()
-    local a, b = real.itemRectMin(), real.itemRectMax()
-    S.slanted(a.x, a.y, b.x, b.y, 5, hovered and c.blueHover or c.blue)
-    pa.x, pa.y = a.x + 9, a.y + (20 - m.y) / 2
-    real.dwriteDrawText(visible, 11, pa, c.dark)
-    return clicked
-  end
-
-  -- Badge (langue) : petit parallélogramme cyan, texte sombre ; renvoie vrai au clic.
-  function S.badge(label)
-    local visible, id = split(label)
-    return (roleCall('tab', drawBadge, visible, id))
-  end
   return S
 end
 

@@ -77,6 +77,8 @@ EN = {
     'modèle du circuit indisponible (%s)': 'track model unavailable (%s)',
     'modèle de la voiture en erreur (%s)': 'car model error (%s)',
     'modèle de la voiture incomplet (%s)': 'car model incomplete (%s)',
+    "données de cette voiture illisibles par CSP (voiture protégée, ou CSP trop ancienne) : roulez un tour propre pour le mode mesure uniquement (onglet MESURE) ; rapport J0 à copier depuis l'onglet DIAGNOSTIC":
+        "this car's data cannot be read by CSP (protected car, or CSP too old): drive a clean lap for the measurement-only mode (MEASURE tab); copy the J0 report from the DIAGNOSTICS tab",
     'espace de setup indisponible': 'setup space unavailable',
     'composé monté illisible : relancer la découverte': 'fitted compound unreadable: run the discovery again',
     'setup actuel non simulable (%s)': 'current setup cannot be simulated (%s)',

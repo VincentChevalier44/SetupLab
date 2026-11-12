@@ -169,14 +169,10 @@ EN = {
     'QUALIF': 'QUALIFYING',
     "Fichier d'essai écrit : au stand, menu de setup ouvert, bouton vert « Charger » (onglet %s), puis roulez.":
         'Trial file written: in the pits, setup menu open, green "Load" button (%s tab), then drive.',
-    'Gardez ou refusez chaque effet (onglet %s), puis étape 4 : valider.': 'Keep or refuse each effect (%s tab), then step 4: validate.',
-    "Roulez d'abord au moins un tour propre avec elle, puis gardez ou refusez chaque effet.":
-        'First drive at least one clean lap with it, then keep or refuse each effect.',
     'v%s validée · à charger au stand': 'v%s validated · to load in the pits',
     "Au stand, bouton vert « Charger », puis roulez : l'affinage repart d'elle (étape 1).":
         'In the pits, green "Load" button, then drive: the refinement continues from it (step 1).',
     'COURSE': 'RACE',
-    'Gardez ou refusez chaque effet, puis validez.': 'Keep or refuse each effect, then validate.',
     'Étape 3/4 · Rouler avec %s': 'Step 3/4 · Drive with %s',
     'Roulez au moins un tour propre, puis triez ses effets au stand.': 'Drive at least one clean lap, then sort its effects in the pits.',
     'Étape 1/4 · v%s en préparation': 'Step 1/4 · v%s in preparation',
@@ -195,12 +191,8 @@ EN = {
     "Rien n'est enregistré sans votre accord, et le setup de la voiture ne change que sur votre clic, au stand.":
         'Nothing is saved without your consent, and the car setup only changes when you click, in the pits.',
     'Les 4 étapes': 'The 4 steps',
-    "1. Rouler : cochez « SetupLab actif » et roulez. Après le minimum de tours propres (onglet Réglages), SetupLab propose une version. En piste, il annonce qu'il a le minimum d'informations et continue d'analyser vos tours.":
-        '1. Drive: tick "SetupLab active" and drive. After the minimum clean laps (SETTINGS tab), SetupLab proposes a version. On track, it announces that it has the minimum information and keeps analysing your laps.',
     "2. Essayer : au stand, « Essayer vN » écrit le setup proposé entier dans un fichier d'essai ; « Charger » le met dans la voiture. Roulez avec.":
         '2. Try: in the pits, "Try vN" writes the whole proposed setup into a trial file; "Load" puts it in the car. Drive with it.',
-    "3. Trier les effets : chaque effet (aéro, pneus, géométrie, suspension, transmission, freins, moteur, aides) est gardé ou refusé d'un clic. Un effet refusé garde son ancienne valeur, ici et dans les calculs suivants.":
-        '3. Sort the effects: each effect (aero, tyres, geometry, suspension, transmission, brakes, engine, aids) is kept or refused with one click. A refused effect keeps its old value, here and in the next computations.',
     "4. Valider : « Valider vN » enregistre la version avec les effets gardés ; elle devient votre référence pour ce circuit. Chargez-la et continuez : SetupLab repart d'elle.":
         '4. Validate: "Validate vN" saves the version with the kept effects; it becomes your reference for this track. Load it and carry on: SetupLab continues from it.',
     "Le setup de course part de votre setup de qualification validé, monté dans la voiture : vos tours avec lui donnent votre rythme. Saisissez le nombre de tours de la course dans l'onglet COURSE.":
@@ -269,8 +261,8 @@ EN = {
         'Scheduler: %s slices; last %s ms; max %s ms; beyond %s ms: %s; max unit %s ms',
     'Tâches : %s terminées, %s en échec, %s annulées': 'Tasks: %s finished, %s failed, %s cancelled',
     "Coût de l'app par frame : dernier %s ms ; moyen %s ms ; max %s ms": 'App cost per frame: last %s ms; average %s ms; max %s ms',
-    'Garde de frame : %s tranches sautées ; %s tranches réduites (< %s images/s) ; erreurs %s':
-        'Frame guard: %s slices skipped; %s slices reduced (< %s fps); errors %s',
+    "Garde de frame : %s tranches sautées ; %s tranches réduites (chute d'images/s) ; erreurs %s":
+        'Frame guard: %s slices skipped; %s slices reduced (fps drop); errors %s',
     'Journal : %s/%s lignes ; %s répétitions filtrées': 'Log: %s/%s lines; %s repeats filtered',
     '%s s  %s  %s : %s': '%s s  %s  %s: %s',
 }

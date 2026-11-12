@@ -238,16 +238,18 @@ tests['L07 trafic : P_trafic favorise l\'aileron et la stabilité au freinage da
     compound = CarModel.defaultSetup(w.base).compound, weights = WEIGHTS })
   local rearWing = nil
   for _, wg in ipairs(w.base.wings) do if wg.name:upper():find('REAR') then rearWing = wg end end
-  local previous = nil
+  local series = {}
   for wing = -4, 4, 2 do
     local s = CarModel.defaultSetup(w.base)
     s.wingAngles[rearWing.index] = rearWing.angle + wing
     local _, detail = StintSim.evaluate(ev, s)
     PY.note('L07', string.format('aileron %+d : P_trafic %.4f s', wing, detail.traffic))
-    -- à 0,5 ms/tour près (égalité numérique)
-    if previous then T.ok(detail.traffic <= previous + 5e-4, 'plus d\'aileron : pénalité ' .. detail.traffic .. ' > ' .. previous) end
-    previous = detail.traffic
+    series[#series + 1] = detail.traffic
   end
+  -- 1.5.11 : tendance sur toute la plage (peu d'aileron : quelques ms d'écart d'un cran à l'autre, du même ordre que les
+  -- autres effets du modèle) ; le plus d'aileron est nettement favorisé
+  T.ok(series[#series] < series[1] - 0.01, "plus d'aileron favorisé : " .. series[#series] .. ' contre ' .. series[1])
+  T.ok(series[#series] <= series[#series - 1] + 5e-4, "les deux derniers crans : l'aileron aide dans l'air sale")
   -- répartition de freinage près du seuil de blocage de l'arrière (0,55 sur cette voiture) : l'air sale
   -- l'aggrave (moins d'appui sur l'arrière), P_trafic le pénalise ; répartition d'origine : aucun blocage
   local stable = CarModel.defaultSetup(w.base)

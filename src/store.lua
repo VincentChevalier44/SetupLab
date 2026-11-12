@@ -63,11 +63,13 @@ local function keyPart(text)
   return (Util.isSafeId(text) and Util.isUtf8(text)) or text:match('^%-?%d+$') ~= nil
 end
 
--- Clé d'entrée : genre puis identifiants sûrs (voiture, circuit, composé…), séparés par « : ».
+-- Clé d'entrée : genre puis identifiants sûrs (voiture, circuit, composé…), séparés par « : ». Apostrophe, guillemet et
+-- point-virgule remplacés par « _ » : CSP écrit la valeur entre apostrophes dans son fichier INI, l'un d'eux pourrait
+-- couper toute la ligne à la relecture (dossier de mod « …_'22 »).
 function M.entryKey(kind, ...)
   local parts = { kind }
   for _, id in ipairs({ ... }) do
-    local text = tostring(id)
+    local text = tostring(id):gsub("['\";]", '_')
     if not keyPart(text) then return nil end
     parts[#parts + 1] = text
   end
@@ -125,9 +127,14 @@ local function validField(kind, field, value)
   return value
 end
 
+-- Nombres écrits court (le stockage tient en une ligne de 64 Ko au plus) : entiers sans décimale, autres à 9 chiffres
+-- significatifs (températures, facteurs, temps au tour : bien plus fin que leur précision réelle).
 local function encode(value)
   if type(value) == 'boolean' then return value and 'true' or 'false' end
-  if type(value) == 'number' then return string.format('%.17g', value) end
+  if type(value) == 'number' then
+    if value == math.floor(value) and math.abs(value) < 2 ^ 53 then return string.format('%d', value) end
+    return string.format('%.9g', value)
+  end
   return 's:' .. value
 end
 
@@ -207,16 +214,19 @@ function M.open(host)
   return store
 end
 
--- Entrée validée (copie), ou nil ; marque l'entrée comme utilisée.
+-- Horodatage d'une entrée : seconde entière (un nombre court dans le texte stocké).
+local function stampOf(kind, now)
+  local stamp = kind and M.SCHEMAS[kind] and M.SCHEMAS[kind].stamp and validField(kind, 'stamp', now) or nil
+  return stamp and math.floor(stamp) or nil
+end
+
+-- Entrée validée (copie), ou nil ; marque l'entrée comme utilisée. La date d'usage seule ne déclenche pas d'écriture
+-- (elle part avec la prochaine) : une relecture ne coûte pas une sérialisation complète.
 function M.get(store, key, now)
   local entry = key and store.entries[key]
   if entry == nil then return nil end
-  local kind = kindOf(key)
-  local stamp = kind and M.SCHEMAS[kind] and M.SCHEMAS[kind].stamp and validField(kind, 'stamp', now) or nil
-  if stamp then
-    entry.stamp = stamp
-    store.dirty = true
-  end
+  local stamp = stampOf(kindOf(key), now)
+  if stamp then entry.stamp = stamp end
   local out = {}
   for field, value in pairs(entry) do out[field] = value end
   return out
@@ -235,7 +245,7 @@ function M.put(store, key, fields, now)
     end
   end
   if count == 0 then return false end
-  if M.SCHEMAS[kind] and M.SCHEMAS[kind].stamp then entry.stamp = validField(kind, 'stamp', now) end
+  entry.stamp = stampOf(kind, now)
   store.entries[key] = entry
   -- en mémoire seulement : sérialisation et purge au flush (1 Hz), pas à chaque frame d'un curseur
   store.dirty = true
@@ -250,29 +260,37 @@ function M.remove(store, key)
   return true
 end
 
--- Purge LRU : tant que le texte dépasse K.storeMaxBytes, l'entrée datée la plus ancienne part (seuls
--- les réglages, une entrée bornée, ne sont pas datés) ; le texte écrit tient donc toujours sous la
--- limite et sera relu à la séance suivante. Un setup figé de la mémoire du circuit ne part qu'en dernier
--- (décision de Vincent du 21/10/2026 : proposé à chaque visite).
-local function locked(key, entry)
-  return key:sub(1, 4) == 'mem:' and entry.locked == true
+-- Purge : tant que le texte dépasse K.storeMaxBytes, une entrée part, d'abord ce qui se recalcule (rugosité, puis
+-- calibrations), puis les derniers setups et les tours de course saisis, puis les versions de qualification validées et
+-- la mémoire du circuit ; à rang égal, la moins récemment utilisée (une entrée sans date compte comme la plus ancienne).
+-- Un setup figé de la mémoire du circuit ne part qu'en dernier (décision de Vincent du 21/10/2026 : proposé à chaque
+-- visite). Seuls les réglages (une entrée bornée) ne partent jamais : le texte écrit tient sous la limite et sera relu à
+-- la séance suivante. Les clés retirées sont rangées dans store.purged (journal de la colle).
+M.PURGE_RANK = { rough = 1, cal = 2, calwet = 2, last = 3, rlaps = 3, ver = 4, mem = 5 }
+
+local function rankOf(key, entry)
+  local kind = kindOf(key)
+  if kind == 'settings' or kind == nil then return nil end
+  if kind == 'mem' and entry.locked == true then return 6 end
+  return M.PURGE_RANK[kind] or 1
 end
 
 function M.purge(store)
   local text = M.serialize(store.entries)
   while #text > K.storeMaxBytes do
-    local oldest, oldestStamp = nil, math.huge
-    for pass = 1, 2 do
-      if oldest == nil then
-        for key, entry in pairs(store.entries) do
-          if entry.stamp and entry.stamp < oldestStamp and (pass == 2 or not locked(key, entry)) then
-            oldest, oldestStamp = key, entry.stamp
-          end
-        end
+    local victim, bestRank, bestStamp = nil, math.huge, math.huge
+    for key, entry in pairs(store.entries) do
+      local rank = rankOf(key, entry)
+      local stamp = entry.stamp or 0
+      if rank and (rank < bestRank or (rank == bestRank and (stamp < bestStamp
+          or (stamp == bestStamp and key < victim)))) then
+        victim, bestRank, bestStamp = key, rank, stamp
       end
     end
-    if oldest == nil then break end
-    store.entries[oldest] = nil
+    if victim == nil then break end
+    store.entries[victim] = nil
+    store.purged = store.purged or {}
+    store.purged[#store.purged + 1] = victim
     text = M.serialize(store.entries)
   end
   return text

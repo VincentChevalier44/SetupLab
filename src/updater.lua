@@ -362,6 +362,8 @@ function M.apply(u, host, paths, current, onDone)
       end
       call(ac.pauseFilesWatching, false)
       if not okR then
+        -- fichiers d'avant tous remis : rien n'a changé dans l'app, la mise à jour peut être retentée sans relancer AC
+        if not mixed then u.wrote = false end
         finish(false, whyR, mixed)
         return
       end

@@ -38,8 +38,8 @@ EN.update({
     'conservé : cartographie moteur, courbes par cartographie non lues': 'kept: engine map, per-map curves not read',
     'conservé : amortisseur de pilonnage du setup non relié au modèle (celui du fichier sert, H18)':
         "kept: the setup's heave damper is not linked to the model (the file's one is used, H18)",
-    "conservé : H16 à confirmer (course avant butée comptée depuis l'assiette statique ou depuis la détente : la course de suspension relevée au stand, rapport J0, tranchera) ; sous H16, aucun effet modélisé":
-        'kept: H16 to confirm (packer travel counted from static ride or from full droop: the suspension travel read in the pits, J0 report, will decide); under H16, no effect modelled',
+    "conservé : la course avant butée compte dans le modèle (depuis la détente, moins la course relevée au stand, H16) ; son réglage n'est pas optimisé, son effet reste à confirmer en jeu":
+        'kept: packer travel counts in the model (from full droop, minus the travel read in the pits, H16); the setting is not optimised, its effect is still to be confirmed in game',
     'conservé : réglage non reconnu par SetupLab': 'kept: setting not recognised by SetupLab',
     "non optimisé : repère de hauteur de l'aéro non vérifié (J5)": 'not optimised: aero height reference not checked (J5)',
     'fixé par la règle de carburant': 'set by the fuel rule',
@@ -87,6 +87,8 @@ EN.update({
     "réglage « Pluie : niveaux d'aide en plus » à 0": '"Rain: extra aid levels" setting at 0',
     'déjà au niveau le plus strict': 'already at the strictest level',
     'déduit %s, mesuré %s : non optimisé': 'deduced %s, measured %s: not optimised',
+    'raideur déduite %s N/mm, suspensions.ini %s N/mm : unité du setup.ini douteuse, non optimisé':
+        'deduced rate %s N/mm, suspensions.ini %s N/mm: doubtful setup.ini unit, not optimised',
     '%s : réglage non optimisable': '%s: setting cannot be optimised',
     '%s : %s hors plage ou hors grille': '%s: %s out of range or off the grid',
     'setup courant illisible': 'current setup unreadable',

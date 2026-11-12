@@ -84,4 +84,8 @@ EN = {
     'UTC (%s)': 'UTC (%s)',
     'Gain · ': 'Gain · ',
     'écarter': 'discard',
+    "Courbes de pneu non lues par le modèle (%s) : adhérence d'après DY_REF, LS_EXPY et DCAMBER, à confirmer par la calibration":
+        'Tyre curves not read by the model (%s): grip from DY_REF, LS_EXPY and DCAMBER, to be confirmed by calibration',
+    'Stockage plein : entrée retirée (%s)': 'Storage full: entry removed (%s)',
+    "Lectures au lancement de l'app (fil principal) :": 'Reads at app start (main thread):',
 }

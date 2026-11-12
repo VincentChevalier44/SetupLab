@@ -91,7 +91,7 @@ function M.run(opts)
   settings.raceLaps = 20
   local rr, sr, race = task('race')
   local load = (loadBefore + loadFactor()) / 2
-  local perSecond = settings.sliceBudgetMs / 1000 * K.fpsTarget
+  local perSecond = settings.sliceBudgetMs / 1000 * K.fpsNominal
   local out = {
     variables = #Space.optimizable(space), evalQ = sq.evaluations, evalC = sr.evaluations, quali = quali, race = race,
     realQ = quali / perSecond, realC = race / perSecond, gainQ = rq.timeCurrent - rq.timeProposed,

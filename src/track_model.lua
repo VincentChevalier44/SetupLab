@@ -450,12 +450,10 @@ function M.build(raw, files, ds, tick)
   t.phi = gaussian(t.bankN, t.n, K.bankSmoothM / t.ds, closed, tick)
   t.bankN = nil
   t.surfaceGrip, t.surfaceSource = M.surfaceGrip(files and files.ini and files.ini['surfaces.ini'])
-  t.surf = {}
   for k = 1, t.n do
     if k % TICK_POINTS == 0 then tick() end
     t.kappa[k] = Util.clamp(t.kappa[k], -K.kappaMax, K.kappaMax)
     t.phi[k] = Util.clamp(t.phi[k], -K.bankMax, K.bankMax)
-    t.surf[k] = t.surfaceGrip
   end
   t.segments = M.segment(t, closed, tick)
   t.bumps = bumps(t, tick)

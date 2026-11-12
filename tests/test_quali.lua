@@ -270,7 +270,9 @@ end
 
 tests['Q07 durée estimée sous 60 images/s, consommation retenue'] = function()
   local Ui = require('src/ui')
-  local app = { settings = Config.defaults(), discovery = { simCurrent = { evalMs = 2 } }, context = { fps = 60 } }
+  -- 1.5.11 : tranche réduite quand les images/s chutent sous la moyenne habituelle (ici 60 i/s, règle de la colle)
+  local app = { settings = Config.defaults(), discovery = { simCurrent = { evalMs = 2 } }, context = { fps = 60 },
+    fpsSlow = function(fps) return fps < 60 * Config.K.fpsDropRatio end }
   local at60 = Ui.estimateSeconds(app, 4000)
   T.near(at60, 4000 * 2 * Config.K.optEstimateFactor / (2 * 60), 1e-9)
   app.context.fps = 30
@@ -449,12 +451,13 @@ tests['Q13 calcul en attente de la découverte : annulé, mode inerte, setup enc
   h.sim.isOnlineRace = true
   app.nextContextAt = 0
   frames(h, 1)
-  T.eq(next(app.pendingComputes), nil, 'en ligne : calcul en attente abandonné')
+  -- 1.5.11 (décision de Vincent du 12/11/2026) : gelé, pas abandonné ; lancé au retour
+  T.ok(app.pendingComputes.quali, 'en ligne : calcul en attente gelé')
   h.sim.isOnlineRace = false
   app.nextContextAt = 0
   T.ok(waitFor(h, function() return app.discoveryState == 'done' and app.inert == nil end))
-  frames(h, 5)
-  T.eq(app.quali, nil)
+  T.ok(waitFor(h, function() return app.quali and app.quali.state ~= 'running' end), 'lancé au retour')
+  app.quali = nil
   -- setup encore modifié pendant la découverte : pas de nouvelle relance en boucle, message
   touch()
   h.click = 'Calculer le setup tour rapide'

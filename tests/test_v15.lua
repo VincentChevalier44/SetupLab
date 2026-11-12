@@ -518,6 +518,14 @@ end
 -- sa famille gardés prennent la nouvelle ; seul le réglage refusé est gardé pour les calculs suivants.
 tests['NV13 un seul réglage refusé : ancienne valeur pour lui, nouvelle pour sa famille'] = function()
   local h, app = ready()
+  -- 1.5.11 : pressions toutes désaccordées (au plus bas) avant le calcul : la famille des pneus a sûrement deux
+  -- réglages changés, quel que soit l'état du modèle
+  for _, name in ipairs({ 'PRESSURE_LF', 'PRESSURE_RF', 'PRESSURE_LR', 'PRESSURE_RR' }) do
+    local sp = spinner(h, name)
+    if sp then sp.value = sp.min end
+  end
+  app.handleIntents({ rediscover = true })
+  T.ok(waitFor(h, function() return app.discoveryState == 'done' end), 'découverte sur les pressions basses')
   local folder = folderOf(h)
   app.handleIntents({ start = 'mine' })
   local r = app.refine

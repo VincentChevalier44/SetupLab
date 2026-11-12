@@ -167,6 +167,8 @@ EN = {
     'écart de temps · seuil %s %% · profil · seuil %s %%': 'time gap · limit %s %% · profile · limit %s %%',
     'idéal %s s plus rapide': 'ideal %s s faster',
     'Facteurs du modèle': 'Model factors',
+    'bornes de calibration · repère à 1,00': 'calibration bounds · mark at 1.00',
+    'tour enregistré (sans ligne IA)': 'recorded lap (no AI line)',
     'Identifié': 'Identified',
     'Non identifié': 'Not identified',
     'En butée': 'At the limit',
@@ -260,7 +262,7 @@ EN = {
     'Terminées': 'Finished',
     'En échec · annulées': 'Failed · cancelled',
     'Tranches sautées': 'Skipped slices',
-    'Réduites (< %s i/s) · erreurs': 'Reduced (< %s fps) · errors',
+    "Réduites (chute d'i/s) · erreurs": 'Reduced (fps drop) · errors',
     'Journal': 'Log',
     '%s/%s lignes · %s répétitions filtrées': '%s/%s lines · %s repeats filtered',
 }

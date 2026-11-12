@@ -205,12 +205,23 @@ function M.run(track, eff, buf, opts)
   if buf == nil or buf.track ~= track then buf = M.new(track) end
   local sth = buf.sth
   local vLim, vf, vb, v, limit = buf.vLim, buf.vf, buf.vb, buf.v, buf.limit
-  local vTop = min(eff.topSpeed, (eff.speedCount - 1) * eff.dv)
+  local ersMask = eff.ersOn and opts.ersMask or nil
+  -- vitesse plafond : pointe du moteur thermique ; avec un plan ERS, limiteur du rapport le plus long (1.5.11)
+  -- (masque sans aucun déploiement : exactement la voiture sans ERS)
+  local deploys = false
+  if ersMask and eff.ersTop then
+    for k = 1, N do
+      if (ersMask[k] or 0) > 0 then
+        deploys = true
+        break
+      end
+    end
+  end
+  local vTop = min(deploys and eff.ersTop or eff.topSpeed, (eff.speedCount - 1) * eff.dv)
   local drs = eff.drsOn == true and buf.drsZoneCount > 0
   local zone, vOpen, drsOpen = buf.drsZone, buf.vOpen, buf.drsOpen
   local vTopOpen = drs and min(eff.topSpeedOpen, (eff.speedCount - 1) * eff.dv) or 0
   local limitG = drs and eff.drsLimitG and eff.drsLimitG * G or nil
-  local ersMask = eff.ersOn and opts.ersMask or nil
   -- équilibre par point (tracé par virage, §12.1) : seulement à la demande, hors boucle de l'optimiseur
   local recordBalance = opts.recordBalance == true
   local kMin, vMin = 1, math.huge
@@ -300,7 +311,8 @@ function M.run(track, eff, buf, opts)
     end
     local drive = min(push, grip) + front
     powerLimited[k0] = push <= grip and 1 or 0
-    local acc = (drive - resist) / mass - G * sth[k0]
+    -- pièces en rotation (roues, moteur, boîte) : masse équivalente du rapport engagé (1.5.11)
+    local acc = (drive - resist) / (mass + (eff.inertiaMass and eff.inertiaMass[gearNow] or 0)) - G * sth[k0]
     local value = speed * speed + 2 * acc * ds
     value = value > 0 and sqrt(value) or 0
     if value > vLim[k] then value = vLim[k] end

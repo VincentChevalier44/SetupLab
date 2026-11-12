@@ -163,30 +163,35 @@ function M.optimize(stages, opts)
   local LD = opts.dLevels or L
   local capStep, dStep = opts.capacity / L, max(1e-9, opts.maxPerLap / LD)
   local NEG = -math.huge
-  -- V[s][d] : meilleur gain pour la charge s·capStep et l'énergie déployée d·dStep
-  local V = {}
-  for s = 0, L do
-    V[s] = {}
-    for d = 0, LD do V[s][d] = NEG end
-  end
+  -- 1.5.11 : états à plat (indice s·(LD + 1) + d), deux tableaux de valeurs échangés d'une étape à l'autre, parent codé
+  -- en nombre (état précédent · 64 + option) : plus aucune table créée par état ni par transition (avant : des dizaines
+  -- de Mo de déchets par plan sur une hybride, ramasse-miettes dans les tranches de calcul)
+  local width = LD + 1
+  local size = (L + 1) * width
+  local V, W = {}, {}
+  for i = 0, size - 1 do V[i], W[i] = NEG, NEG end
   local tick = opts.tick or function() end
   local up = opts.nearest and 0.5 or 1 - 1e-9
   local down = opts.nearest and 0.5 or 1e-9
   local s0 = floor(opts.soc0 / capStep + down)
-  V[min(L, max(0, s0))][0] = 0
+  V[min(L, max(0, s0)) * width] = 0
   local parents = {}
   for j, stage in ipairs(stages) do
-    local W, P = {}, {}
-    for s = 0, L do
-      W[s], P[s] = {}, {}
-      for d = 0, LD do W[s][d] = NEG end
+    local options = stage.options
+    if #options >= 64 then return nil end
+    local P = {}
+    for i = 0, size - 1 do
+      if i % 4096 == 4095 then tick() end
+      W[i] = NEG
     end
     for s = 0, L do
-      if s % 16 == 0 then tick() end
+      if s % 4 == 0 then tick() end
+      local row = s * width
       for d = 0, LD do
-        local v = V[s][d]
+        local v = V[row + d]
         if v > NEG then
-          for o, option in ipairs(stage.options) do
+          for o = 1, #options do
+            local option = options[o]
             local soc = s * capStep - option.energy
             local dep = d * dStep + option.energy
             if soc >= -1e-9 and dep <= opts.maxPerLap + 1e-9 then
@@ -194,35 +199,38 @@ function M.optimize(stages, opts)
               local s2 = min(L, floor(socNext / capStep + down))
               local d2 = min(LD, floor(dep / dStep + up))
               local value = v + option.gain
-              if value > W[s2][d2] then
-                W[s2][d2] = value
-                P[s2][d2] = { s = s, d = d, o = o }
+              local k = s2 * width + d2
+              if value > W[k] then
+                W[k] = value
+                P[k] = (row + d) * 64 + o
               end
             end
           end
         end
       end
     end
-    V, parents[j] = W, P
+    V, W = W, V
+    parents[j] = P
   end
-  local best, bs, bd = NEG, nil, nil
+  local best, bk = NEG, nil
   local socMin = opts.socEndMin or 0
   for s = 0, L do
     if s * capStep >= socMin - 1e-9 then
       for d = 0, LD do
-        if V[s][d] > best then best, bs, bd = V[s][d], s, d end
+        local v = V[s * width + d]
+        if v > best then best, bk = v, s * width + d end
       end
     end
   end
-  if bs == nil then return nil end
+  if bk == nil then return nil end
   local choice = {}
-  local s, d = bs, bd
+  local k = bk
   for j = #stages, 1, -1 do
-    local p = parents[j][s][d]
-    choice[j] = p.o
-    s, d = p.s, p.d
+    local code = parents[j][k]
+    choice[j] = code % 64
+    k = floor(code / 64)
   end
-  return best, choice, bs * capStep
+  return best, choice, floor(bk / width) * capStep
 end
 
 

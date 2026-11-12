@@ -15,7 +15,7 @@ M.LIMITS = {
   lineChars = 4096,   -- une ligne plus longue est tronquée avant analyse
   numberChars = 64,   -- texte d'un nombre
   idChars = 128,      -- identifiant de contenu AC
-  fileNameChars = 64, -- nom de fichier produit
+  fileNameChars = 80, -- nom de fichier produit (1.5.11 : 64 coupait le meilleur tour d'un nom long sous la pluie)
   rtoLabelChars = 32, -- libellé d'un rapport de boîte
 }
 
@@ -75,6 +75,22 @@ function M.call(fn, ...)
   return true, a, b
 end
 
+-- Appel d'une fonction de CSP depuis une tâche de l'ordonnanceur : exécuté sur le fil principal, hors de la coroutine
+-- (issue n° 2 : en CSP 0.2.11, ac.getFolder, ac.getCarDataFiles, ac.getSetupSpinners, ac.readDataFile, ac.INIConfig et
+-- ac.DataLUT11 rendent un nombre ou du vide appelés depuis une coroutine, alors que les mêmes appels réussissent au
+-- lancement de l'app). Hors tâche : M.call. Mêmes retours que M.call. La fonction appelée ne doit jamais rendre la main.
+local HOST_CALL = {}
+local activeTask = nil
+
+function M.callHost(fn, ...)
+  if fn == nil then return false, 'absent' end
+  local co = activeTask
+  if co ~= nil and coroutine.running() == co and select('#', ...) <= 5 then
+    return coroutine.yield(HOST_CALL, fn, ...)
+  end
+  return M.call(fn, ...)
+end
+
 -- Liste renvoyée par CSP (résultat d'un appel : ok, liste) : une table, ou un objet indexable (cdata, userdata) selon la
 -- version (issue n° 2, CSP 0.2.11 : « format inattendu »), copié en table depuis l'indice 0 s'il existe (tableaux de CSP),
 -- sinon 1. Renvoie la liste, ou nil et la raison (type reçu compris).
@@ -87,7 +103,7 @@ function M.listOf(ok, list)
     local okN, len = pcall(function() return #list end)
     if okN and M.isFinite(len) and len > 0 then n = math.floor(len) end
   end
-  if n == 0 then return nil, 'format inattendu (' .. kind .. ')' end
+  if n == 0 then return nil, 'format inattendu (' .. kind .. (kind == 'number' and (' ' .. tostring(list)) or '') .. ')' end
   local base = M.get(list, 0) ~= nil and 0 or 1
   local out = {}
   for i = 0, n - 1 do out[#out + 1] = M.get(list, base + i) end
@@ -278,6 +294,11 @@ function M.parseNumber(s)
   s = M.trim(stripComment(s, ';'))
   if #s > M.LIMITS.numberChars then return nil end
   local n = tonumber(s)
+  if M.isFinite(n) then return n end
+  -- comme AC (lecture du nombre en tête, 1.5.11) : « 1310 // kg », « 2500Nm » ; texte brut des INI (CSP 0.2.11)
+  local head = M.trim(stripComment(s, '//')):match('^[%+%-]?%d*%.?%d+[eE][%+%-]?%d+')
+    or M.trim(stripComment(s, '//')):match('^[%+%-]?%d*%.?%d+')
+  n = head and tonumber(head) or nil
   if M.isFinite(n) then return n end
   return nil
 end
@@ -552,27 +573,34 @@ function M.logNew(capacity, minInterval, maxChars)
   return {
     lines = {}, head = 0, count = 0, seq = 0, dropped = 0,
     capacity = capacity, minInterval = minInterval, maxChars = maxChars or 400,
-    lastByCode = {}, codes = 0, maxLevel = M.LEVELS.INFO,
+    lastByCode = {}, lastTextByCode = {}, codes = 0, maxLevel = M.LEVELS.INFO,
   }
 end
 
+-- Limiteur : un même code au plus toutes les minInterval s ; deux messages différents d'un même code au même instant
+-- (même image : retouches détectées ensemble, affinage arrêté puis relancé) passent tous les deux. Horloge revenue en
+-- arrière : la ligne passe.
 function M.logAdd(log, now, level, code, message)
   local rank = M.LEVELS[level] or M.LEVELS.INFO
   if rank > log.maxLevel then return false end
-  local last = log.lastByCode[code]
-  if last and now - last < log.minInterval then
+  message = tostring(message)
+  local key = code
+  local last = log.lastByCode[key]
+  local sameInstant = last == now and log.lastTextByCode[key] ~= message
+  if last and now >= last and now - last < log.minInterval and not sameInstant then
     log.dropped = log.dropped + 1
     return false
   end
+  log.lastTextByCode[key] = message
   if last == nil then
     log.codes = log.codes + 1
     if log.codes > 512 then
-      log.lastByCode, log.codes = {}, 1
+      log.lastByCode, log.lastTextByCode, log.codes = {}, {}, 1
     end
   end
-  log.lastByCode[code] = now
+  log.lastByCode[key] = now
   log.head = log.head % log.capacity + 1
-  log.lines[log.head] = { t = now, level = level, code = code, text = M.truncate(tostring(message), log.maxChars) }
+  log.lines[log.head] = { t = now, level = level, code = code, text = M.truncate(message, log.maxChars) }
   log.count = min(log.count + 1, log.capacity)
   log.seq = log.seq + 1
   return true
@@ -643,6 +671,18 @@ function M.schedulerBusy(s)
   return s.current ~= nil or #s.queue > 0
 end
 
+-- Rappel de fin de tâche protégé : une erreur n'arrête rien, mais elle est gardée (s.callbackErrors) pour le journal de
+-- la colle (une erreur muette laisserait un état à moitié mis à jour sans trace).
+function M.schedulerCallback(s, task, ...)
+  local ok, err = pcall(task.onDone, ...)
+  if not ok then
+    s.callbackErrors = s.callbackErrors or {}
+    if #s.callbackErrors < 16 then
+      s.callbackErrors[#s.callbackErrors + 1] = tostring(task.name) .. ' : ' .. M.truncate(tostring(err), M.ERROR_MAX)
+    end
+  end
+end
+
 local function finish(s, task, ok, value)
   s.current = nil
   if ok then
@@ -652,7 +692,7 @@ local function finish(s, task, ok, value)
   else
     s.stats.failed = s.stats.failed + 1
   end
-  if task.onDone then pcall(task.onDone, ok, value, task.cpuMs) end
+  if task.onDone then M.schedulerCallback(s, task, ok, value, task.cpuMs) end
 end
 
 -- Exécute une tranche. clock : fonction en secondes ou nil ; budget en secondes ;
@@ -678,7 +718,13 @@ function M.schedulerStep(s, clock, budget, quota)
     ran = true
     local resumedAt = clock and clock() or nil
     s.lastTick = resumedAt or 0
-    local ok, result = coroutine.resume(task.co)
+    activeTask = task.co
+    local ok, result, fn, a1, a2, a3, a4, a5 = coroutine.resume(task.co)
+    -- appels de CSP demandés par la tâche (M.callHost) : faits ici, sur le fil principal, puis la tâche reprend
+    while ok and result == HOST_CALL and coroutine.status(task.co) == 'suspended' do
+      ok, result, fn, a1, a2, a3, a4, a5 = coroutine.resume(task.co, M.call(fn, a1, a2, a3, a4, a5))
+    end
+    activeTask = nil
     if resumedAt then task.cpuMs = task.cpuMs + (clock() - resumedAt) * 1000 end
     if not ok then
       task.error = tostring(result)
@@ -710,7 +756,7 @@ function M.schedulerCancel(s, name)
   for _, task in ipairs(s.queue) do
     if name == nil or task.name == name then
       s.stats.cancelled = s.stats.cancelled + 1
-      if task.onDone then pcall(task.onDone, false, 'cancelled') end
+      if task.onDone then M.schedulerCallback(s, task, false, 'cancelled') end
     else
       kept[#kept + 1] = task
     end

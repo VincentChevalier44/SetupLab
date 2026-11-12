@@ -36,6 +36,22 @@ local UPPER = { ['é'] = 'É', ['è'] = 'È', ['ê'] = 'Ê', ['ë'] = 'Ë', ['à
   ['ô'] = 'Ô', ['ö'] = 'Ö', ['û'] = 'Û', ['ù'] = 'Ù', ['ü'] = 'Ü', ['î'] = 'Î', ['ï'] = 'Ï', ['œ'] = 'Œ', ['æ'] = 'Æ' }
 local upCache, upCount = {}, 0
 -- capitales d'un texte déjà traduit (traduire d'abord : les clés du dictionnaire restent en casse normale)
+-- Valeur qui change à chaque image (coût par image, progression d'un calcul, points du tour) gardée quelques images
+-- (1.5.11) : le texte reste le même entre deux rafraîchissements, ses mesures et sa traduction restent en cache (avant :
+-- une chaîne nouvelle à chaque image, mesurée en DirectWrite).
+local held = {}
+local function hold(key, value, frames)
+  local f = X.app and X.app.frameNo or 0
+  local e = held[key]
+  if e == nil then
+    e = {}
+    held[key] = e
+  end
+  if e.f == nil or f - e.f >= frames or f < e.f then e.f, e.v = f, value end
+  return e.v
+end
+M.hold = hold
+
 local function up(s)
   local hit = upCache[s]
   if hit then return hit end
@@ -44,7 +60,6 @@ local function up(s)
   upCache[s], upCount = out, upCount + 1
   return out
 end
-M.upper = up
 
 -- cache des mesures : rôle → taille → largeur de retour à la ligne (0 : aucune) → texte → { largeur, hauteur } ; aucune
 -- chaîne construite par appel
@@ -84,7 +99,6 @@ local function measure(role, size, s, wrap)
   if wcount > 4000 then sizes, older, wcount = {}, sizes, 0 end
   return hit[1], hit[2]
 end
-M.measure = measure
 
 local function text(role, size, s, x, y, color)
   X.S.call(role, X.ui.dwriteDrawText, s, size, vec(1, X.ox + x, X.oy + y), color or X.c.light)
@@ -437,7 +451,8 @@ local function header(tabs, W, narrow)
   local idle = app.auto ~= true or app.inert ~= nil
   local state = idle and 'EN VEILLE' or (grid and 'SUR LA GRILLE' or (atPit and 'AU STAND' or 'EN PISTE · REC'))
   if narrow then state = idle and 'VEILLE' or (grid and 'GRILLE' or (atPit and 'STAND' or 'PISTE')) end
-  local fg = app.auto ~= true and c.tabIdle or (atPit and c.go or c.rec)
+  -- en veille (SetupLab inactif, ou en pause : replay, en ligne) : pastille et point de la même couleur (1.5.11)
+  local fg = idle and c.tabIdle or (atPit and c.go or c.rec)
   local bg = idle and c.pillIdle or (atPit and c.pillGo or c.pillRec)
   local ps = L.t(state)
   local pw, ph = measure('section', narrow and 11 or 12, ps)
@@ -504,7 +519,7 @@ local function statusRow(x, y, w)
     if cx + cw > x + w then break end
     cx = cx + chip(cx, y, ink, k == 'quali' and 'Qualif' or 'Course', st) + 16
   end
-  local perf = app.perf and app.perf.avgMs
+  local perf = app.perf and hold('perf', app.perf.avgMs, 15)
   if Util.isFinite(perf) then
     local s = Util.fmt(perf, 1) .. ' ms/frame'
     local pw = measure('mono', 10.5, s)
@@ -1447,7 +1462,8 @@ local function toolsPanel(kind, x, y, w, dry)
     local f = Util.clamp(o.evaluations / math.max(1, q.budget), 0, 1)
     rect(px, cy + 4, px + pw - 110, cy + 20, c.trackBg)
     rect(px, cy + 4, px + (pw - 110) * f, cy + 20, c.blue)
-    text('mono', 10.5, L.f('%s : %s / %s', L.t(o.phase), o.evaluations, q.budget), px + 6, cy + 5, c.light)
+    text('mono', 10.5, L.f('%s : %s / %s', L.t(o.phase), hold('evals_' .. kind, o.evaluations, 6), q.budget), px + 6, cy + 5,
+      c.light)
     if button(spec.cancel, px + pw - 100, cy, 100, 24, nil, 12) then X.intents[kind .. 'Cancel'] = true end
     cy = cy + 30
     for _, ln in ipairs(lines) do cy = cy + textBox('text', 11, ln[1], px, cy, pw, ln[2]) + 4 end
@@ -1498,7 +1514,15 @@ local function picksRow(model, kind, x, y, w, wide, dry)
   if #list == 0 then return 0 end
   local cols = wide and #list or 1
   local each = (w - 8 * (cols - 1)) / cols
+  -- hauteur d'après le texte le plus long (1.5.11 : en anglais, ou entre 640 et 720 px, titre sur deux lignes et texte sur
+  -- quatre recouvraient le pied de la carte)
   local h1 = 150
+  for _, item in ipairs(list) do
+    local spec = PICK[item.id]
+    local th = textBox('button', 20, up(L.t(spec.title)), 0, 0, each - 28, nil, true)
+    local bh = textBox('text', 12, L.t(item.a.tip or ''), 0, 0, each - 28, nil, true)
+    h1 = math.max(h1, 34 + th + 6 + bh + 8 + 30)
+  end
   local rows = math.ceil(#list / cols)
   local h = rows * h1 + (rows - 1) * 8
   if dry then return h end
@@ -1564,7 +1588,9 @@ local function trackPanels(x, y, w, wide, dry)
   panel(x, y, x + each, y + h1)
   local px = x + 14
   text('section', 14, up(L.t('Circuit')), px, y + 12, c.light)
-  lab('ligne IA · fast_lane.ai', px + measure('section', 14, up(L.t('Circuit'))) + 10, y + 14)
+  local fromLap = d and d.trackModel and d.trackModel.source == 'reconnaissance'
+  lab(fromLap and 'tour enregistré (sans ligne IA)' or 'ligne IA · fast_lane.ai',
+    px + measure('section', 14, up(L.t('Circuit'))) + 10, y + 14)
   if p then
     lab('Longueur', px, y + 40)
     local lw = text('display', 22, Util.fmt((p.length or 0) / 1000, 2), px, y + 54, c.light)
@@ -2347,7 +2373,7 @@ local function measurePage(x, y, w)
   if rec then
     local s
     if rec.state == 'enregistrement' then
-      s = L.f('Enregistrement du tour en cours : %s points', rec.n) .. (rec.invalid and (' · ' .. L.t('sera rejeté : ')
+      s = L.f('Enregistrement du tour en cours : %s points', hold('rec_n', rec.n, 15)) .. (rec.invalid and (' · ' .. L.t('sera rejeté : ')
         .. L.t(tostring(rec.invalid))) or '')
     else
       s = L.t('Enregistrement : en attente du prochain passage de la ligne.')
@@ -2391,7 +2417,9 @@ local function measurePage(x, y, w)
   local function factorsPanel(px, py, pw)
     panel(px, py, px + pw, py + hr)
     X.cw = px + pw
-    panelTitle('Facteurs du modèle', px + 14, py + 12, '0.90 · 1.00 · 1.10')
+    -- 1.5.11 : chaque jauge va d'une borne de calibration à l'autre (K.calibBounds), repère à 1,00 (avant : 0,90 à 1,10
+    -- pour tous, un facteur à 0,78 paraissait collé à 0,90)
+    panelTitle('Facteurs du modèle', px + 14, py + 12, L.t('bornes de calibration · repère à 1,00'))
     local ry = py + 38
     for _, key in ipairs(X.U.FACTOR_ORDER) do
       local v = cr.factors[key]
@@ -2400,9 +2428,11 @@ local function measurePage(x, y, w)
       text('text', 12, fitted('text', 12, L.t(X.U.FACTOR_LABELS[key]), 90), px + 14, ry + 2, c.light)
       local bx, bw = px + 110, pw - 110 - 14 - 140
       rect(bx, ry + 7, bx + bw, ry + 13, c.trackBg)
-      local mid = bx + bw / 2
+      local bounds = K.calibBounds[key] or { 0.9, 1.1 }
+      local lo, hi = bounds[1], math.max(bounds[1] + 1e-6, bounds[2])
+      local mid = bx + bw * Util.clamp((1 - lo) / (hi - lo), 0, 1)
       rect(mid, ry + 4, mid + 1, ry + 16, c.dim)
-      local f = Util.clamp(((v or 1) - 0.9) / 0.2, 0, 1)
+      local f = Util.clamp(((v or 1) - lo) / (hi - lo), 0, 1)
       dot(bx + f * bw, ry + 10, 4, sc)
       text('mono', 11, Util.fmt(v, 3), bx + bw + 10, ry + 3, c.light)
       text('section', 10.5, up(L.t(state)), px + pw - 14 - measure('section', 10.5, up(L.t(state))), ry + 4, sc)
@@ -2476,6 +2506,11 @@ local function measurePage(x, y, w)
     bx = bx + 218
   end
   local def = Config.byKey.calibrationAuto
+  -- fenêtre étroite : l'interrupteur passe à la ligne (1.5.11 : sous 485 px environ, il sortait de la zone visible)
+  if def and bx > x and x + w - bx < 260 then
+    bx = x
+    cy = cy + 38
+  end
   if def then
     local sw = text('text', 12, fitted('text', 12, L.t('Calibration automatique après chaque tour valide'), x + w - bx - 50), bx,
       cy + 7, c.soft)
@@ -3188,7 +3223,7 @@ function M.debug(host, app, U)
     { 'Tâches · garde', nil, {
       { 'Terminées', tostring(s.completed) }, { 'En échec · annulées', s.failed .. ' · ' .. s.cancelled },
       { 'Tranches sautées', tostring(p.guardSkips) },
-      { L.f('Réduites (< %s i/s) · erreurs', K.fpsTarget), p.slowFrames .. ' · ' .. p.errors } } },
+      { "Réduites (chute d'i/s) · erreurs", p.slowFrames .. ' · ' .. p.errors } } },
   }
   local ph = 40 + 4 * 20 + 6
   for i, it in ipairs(panels) do

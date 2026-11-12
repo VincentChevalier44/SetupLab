@@ -258,7 +258,7 @@ tests['J04 chargement accepté par le jeu mais setup différent : écart signal�
   clickLoad(h)
   T.eq(#h.loadCalls, 1)
   T.contains(app.ui.message, 'vérification du chargement précédent en cours')
-  for _ = 1, Config.K.loadVerifyFrames + 2 do frame(h) end
+  for _ = 1, math.ceil(Config.K.loadVerifySeconds * 60) + 2 do frame(h) end
   T.eq(app.loadCheck, nil)
   T.eq(app.loadTest.ok, false)
   T.contains(app.ui.message, 'Écart')
@@ -271,7 +271,7 @@ tests['J04 chargement accepté par le jeu mais setup différent : écart signal�
     if sp.name == 'FUEL' then sp.value = sp.value + 1 end
   end
   clickLoad(h)
-  for _ = 1, Config.K.loadVerifyFrames + 2 do frame(h) end
+  for _ = 1, math.ceil(Config.K.loadVerifySeconds * 60) + 2 do frame(h) end
   h.opts.loadSkip, h.opts.loadNoApply = nil, true
   T.eq(app.loadTest.ok, false, 'écart sur le carburant')
   T.contains(app.loadTest.reason, 'FUEL')

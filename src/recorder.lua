@@ -158,7 +158,8 @@ local function keep(rec, lap)
     laps.order[#laps.order + 1] = key
     if #laps.order > K.recorderMaxSignatures then
       for i, old in ipairs(laps.order) do
-        if not rec.protected[tostring(old):match('^(.-)#pluie$') or old] then
+        -- jamais la clé qui vient d'entrer (sinon son tour resterait hors de la liste, jamais évincé)
+        if old ~= key and not rec.protected[tostring(old):match('^(.-)#pluie$') or old] then
           table.remove(laps.order, i)
           laps.best[old] = nil
           break
@@ -169,6 +170,7 @@ local function keep(rec, lap)
   if best == nil or lap.time < best.time then laps.best[key] = lap end
   M.keepFamily(laps, lap)
 end
+M.keepLap = keep -- banc d'essai
 
 -- Vos temps par « famille » de setup (sans les réglages changés en roulant : carburant, répartition de freinage) :
 -- meilleur tour, nombre de tours valides et somme des temps (moyenne de course) ; tour de course en trafic : compté dans
@@ -311,7 +313,10 @@ local function resolvePending(rec, car, now)
   local stale = ms ~= nil and ms == p.staleMs and now < p.deadline
   if official and not stale then
     for _, reference in ipairs(p.references) do
-      if abs(official - reference) <= K.recorderTimeTolerance then return finalize(rec, official, nil) end
+      -- tolérance : au moins la durée de l'image du passage de ligne (1.5.11 : un à-coup de plus de 0,1 s à la ligne faisait
+      -- rejeter un tour qu'AC comptait)
+      local tol = max(K.recorderTimeTolerance, (p.frameDt or 0) + K.recorderTimeFrameMargin)
+      if abs(official - reference) <= tol then return finalize(rec, official, nil) end
     end
   end
   if now >= p.deadline then
@@ -480,6 +485,14 @@ end
 -- { trackLength, conditions (températures, grip), keepPositions, paused, carsCount }.
 -- Renvoie le tour terminé (temps officiel confirmé), s'il y en a un.
 function M.update(rec, host, now, signatureFn, context)
+  -- horloge revenue en arrière (séance recommencée) : tour en cours et tour en attente abandonnés, échéancier remis à
+  -- zéro (sinon plus aucun échantillon jusqu'à ce que l'horloge rattrape l'ancienne valeur)
+  if rec.lastSampleAt and now < rec.lastSampleAt - 1e-3 then
+    rec.nextSampleAt, rec.lastSampleAt, rec.pending, rec.startTime = nil, nil, nil, nil
+    M.abort(rec, 'horloge revenue en arrière')
+  end
+  local frameDt = rec.lastUpdateAt and max(0, now - rec.lastUpdateAt) or 0
+  rec.lastUpdateAt = now
   local ok, car = call(get(host.ac, 'getCar'), 0)
   if not ok or car == nil then return nil end
   local lapCount = num(car, 'lapCount')
@@ -502,7 +515,8 @@ function M.update(rec, host, now, signatureFn, context)
       if rec.lapTimeRef then references[#references + 1] = rec.lapTimeRef / 1000 end
       if rec.lapTimePeak then references[#references + 1] = rec.lapTimePeak / 1000 end
       if rec.startTime then references[#references + 1] = now - rec.startTime end
-      rec.pending = { lap = lap, references = references, deadline = now + K.recorderTimeWait, staleMs = rec.officialMid }
+      rec.pending = { lap = lap, references = references, deadline = now + K.recorderTimeWait, staleMs = rec.officialMid,
+        frameDt = frameDt }
     end
     startLap(rec, signature, lapCount, now, family)
     crossed = true

@@ -75,8 +75,8 @@ local TRANSLATED = {
 }
 
 -- Hôte qui dessine en traduisant (créé une fois par hôte) et, si l'hôte le permet, avec le thème Racing 26
--- (src/skin.lua) : polices de l'app, boutons inclinés, interrupteurs. ui.skin, ui.skinText, ui.skinButton et ui.skinBadge
--- n'existent qu'avec le thème ; ui.plainText : texte ImGui (infobulles).
+-- (src/skin.lua) : polices de l'app, boutons inclinés, interrupteurs. ui.skin, ui.skinText et ui.skinButton n'existent
+-- qu'avec le thème ; ui.plainText : texte ImGui (infobulles).
 function M.translating(host)
   if host.translating then return host end
   local real = host.ui
@@ -95,7 +95,7 @@ function M.translating(host)
       overrides[name] = skin[name]
     end
     overrides.button = function(label, size) return skin.button(label, size, nil) end
-    overrides.skin, overrides.skinText, overrides.skinButton, overrides.skinBadge = skin, skin.textAs, skin.button, skin.badge
+    overrides.skin, overrides.skinText, overrides.skinButton = skin, skin.textAs, skin.button
   end
   local proxy = setmetatable({}, { __index = function(t, key)
     local own = overrides[key]
@@ -518,10 +518,11 @@ function M.estimateSeconds(app, budget, lapsPerEval, kind)
   if not Util.isFinite(evalMs) then return nil end
   evalMs = evalMs * (lapsPerEval or 1)
   local fps = app.context and app.context.fps
-  if not Util.isFinite(fps) or fps <= 0 then fps = Config.K.fpsTarget end
-  -- sous fpsTarget, la tranche est réduite (A4) : le calcul est d'autant plus long
+  local slow = M.slowFrames(app)
+  if not Util.isFinite(fps) or fps <= 0 then fps = Config.K.fpsNominal end
+  -- images/s en chute : la tranche est réduite (A4), le calcul est d'autant plus long
   local slice = app.settings.sliceBudgetMs
-  if fps < Config.K.fpsTarget then slice = slice * Config.K.slowFpsSliceFactor end
+  if slow then slice = slice * Config.K.slowFpsSliceFactor end
   local cpuMs = budget * evalMs * Config.K.optEstimateFactor
   return cpuMs / (slice * fps)
 end
@@ -534,14 +535,14 @@ function M.durationText(estimate, target, slow)
   local text = ', durée estimée ≈ ' .. Util.fmt(estimate, 0) .. ' s'
   local long = estimate > target
   if long then text = text .. ' : plus de ' .. target .. ' s, baisser le budget dans l\'onglet Réglages pour aller plus vite' end
-  if slow then text = text .. ' (sous ' .. K.fpsTarget .. ' images/s, la tranche de calcul est réduite)' end
+  if slow then text = text .. ' (images/s en chute, la tranche de calcul est réduite)' end
   return text, long
 end
 
--- Sous la fréquence d'images visée (tranche de calcul réduite, A4).
+-- Images/s en chute (tranche de calcul réduite, A4) : règle de la colle (app.fpsSlow).
 function M.slowFrames(app)
   local fps = app.context and app.context.fps
-  return Util.isFinite(fps) and fps > 0 and fps < Config.K.fpsTarget or false
+  return app.fpsSlow ~= nil and app.fpsSlow(fps) or false
 end
 
 -- Mode en ligne : en pause faute du réglage « Actif en ligne » ; sous le bandeau de pause, un bouton l'active en un
@@ -2879,12 +2880,14 @@ local function overlaySetup(app, kind)
 end
 
 -- Réglages changés d'une version, du plus au moins important (gain prévu), triés une fois.
+-- 1.5.11 : refait quand la liste de la version change (version en préparation recalculée à chaque tour : avant, l'overlay
+-- gardait les réglages du premier calcul).
 local function overlayChanges(e)
-  if e.overlayChanges == nil then
+  if e.overlayChanges == nil or e.overlayChangesOf ~= e.changeList then
     local list = {}
     for _, c in ipairs(e.changeList or {}) do list[#list + 1] = c end
     table.sort(list, function(a, b) return math.abs(a.contribution or 0) > math.abs(b.contribution or 0) end)
-    e.overlayChanges = list
+    e.overlayChanges, e.overlayChangesOf = list, e.changeList
   end
   return e.overlayChanges
 end
@@ -3034,8 +3037,8 @@ function M.debug(host, app)
   ui.text(L.f('Tâches : %s terminées, %s en échec, %s annulées', s.completed, s.failed, s.cancelled))
   ui.text(L.f('Coût de l\'app par frame : dernier %s ms ; moyen %s ms ; max %s ms', Util.fmt(p.lastMs, 3), Util.fmt(p.avgMs, 3),
     Util.fmt(p.maxMs, 3)))
-  ui.text(L.f('Garde de frame : %s tranches sautées ; %s tranches réduites (< %s images/s) ; erreurs %s', p.guardSkips,
-    p.slowFrames, Config.K.fpsTarget, p.errors))
+  ui.text(L.f("Garde de frame : %s tranches sautées ; %s tranches réduites (chute d'images/s) ; erreurs %s", p.guardSkips,
+    p.slowFrames, p.errors))
   ui.text(L.f('Journal : %s/%s lignes ; %s répétitions filtrées', app.log.count, app.log.capacity, app.log.dropped))
   ui.separator()
   local entries = Util.logEntries(app.log)

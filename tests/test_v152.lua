@@ -166,6 +166,7 @@ tests['RV03 setups de qualification : liste à jour après un essai remplacé pa
   local text = h.ac.stringifyCurrentSetup(true, false)
   h.written[folder .. '/SetupLab_Qualif_v3_essai.ini'] = text
   app.written['SetupLab_Qualif_v3_essai.ini'] = 'x'
+  app.writtenGen = app.writtenGen + 1 -- 1.5.11 : chaque écriture de SetupLab compte (clé des fichiers écrits)
   app.qualiScan = nil
   frames(h, 3)
   T.eq(app.qualiFiles()[1].file, 'SetupLab_Qualif_v3_essai.ini')
@@ -173,6 +174,7 @@ tests['RV03 setups de qualification : liste à jour après un essai remplacé pa
   app.written['SetupLab_Qualif_v3_essai.ini'] = nil
   h.written[folder .. '/SetupLab_Qualif_v4_essai.ini'] = text
   app.written['SetupLab_Qualif_v4_essai.ini'] = 'y'
+  app.writtenGen = app.writtenGen + 1
   frames(h, 3)
   local list = app.qualiFiles()
   T.eq(#list, 1)
@@ -458,6 +460,8 @@ tests['LG01 journal recopié dans le log de CSP, ligne pour ligne et au même d�
     T.eq(h.cspLog[#h.cspLog - #entries + i], e.level .. ' ' .. e.code .. ' : ' .. e.text)
   end
   app.handleIntents({ setting = { key = 'refineMinLaps', value = 3 } })
+  -- 1.5.11 : deux messages différents d'un même code au même instant passent ; une image plus tard, limité
+  frames(h, 1)
   app.handleIntents({ setting = { key = 'refineMinLaps', value = 4 } })
   T.eq(cspCount(h, 'INFO setting : '), 1, 'même code dans les 2 s : ni au journal ni au log CSP')
   T.eq(#h.cspLog, app.log.seq)

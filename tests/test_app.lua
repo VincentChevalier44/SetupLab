@@ -129,7 +129,8 @@ tests['A03 session en ligne, « Actif en ligne » décoché : inerte, puis repri
   T.eq(app.inert, nil)
 end
 
-tests['A04 replay pendant la découverte : annulation puis reprise'] = function()
+-- 1.5.11 (décision de Vincent du 12/11/2026) : en replay, le travail en cours est gelé, puis repris au retour.
+tests['A04 replay pendant la découverte : gelée puis reprise'] = function()
   local h, _, app = boot()
   frames(h, 1)
   T.eq(app.discoveryState, 'running')
@@ -137,10 +138,15 @@ tests['A04 replay pendant la découverte : annulation puis reprise'] = function(
   app.nextContextAt = 0
   frames(h, 1)
   T.ok(app.inert and app.inert:find('Replay'))
-  T.eq(app.discoveryState, 'idle')
-  T.ok(app.scheduler.stats.cancelled >= 1)
+  local slices = app.scheduler.stats.slices
+  frames(h, 30)
+  T.eq(app.discoveryState, 'running', 'gelée, pas annulée')
+  T.eq(app.scheduler.stats.cancelled, 0)
+  T.eq(app.scheduler.stats.slices, slices, 'aucune tranche en replay')
   h.sim.isReplayActive = false
+  app.nextContextAt = 0
   T.ok(untilDone(h, app))
+  T.eq(app.scheduler.stats.cancelled, 0)
 end
 
 tests['A05 changement de voiture : résultats périmés et nouvelle découverte'] = function()
@@ -373,7 +379,8 @@ tests['A18 bouton « Enregistrer une copie du setup actuel »'] = function()
   T.contains(app.ui.message, 'relue et identique')
   T.eq(app.discovery.caps.byId.setup_write.status, 'available')
   T.ok(untilDone(h, app, 400), 'rapport reconstruit')
-  T.contains(app.report, 'confirmée : ' .. app.writeTest.path)
+  -- 1.5.11 : profil Windows masqué dans le rapport (vie privée)
+  T.contains(app.report, 'confirmée : ' .. require('src/caps').maskProfile(app.writeTest.path))
   -- un second clic crée un autre fichier, sans écraser le premier
   local firstPath = app.writeTest.path
   h.click = 'Enregistrer une copie du setup actuel'

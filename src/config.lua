@@ -8,7 +8,7 @@ local M = {}
 M.appName = 'SetupLab'
 -- Première bêta publique (décision de Vincent du 22/10/2026 : « on la présentera comme la version bêta numéro
 -- un, v1.0 ») ; les versions 1.0.0 à 1.7.0 d'avant étaient internes (CHANGELOG.md).
-M.version = '1.0.0-beta.1.5.10'
+M.version = '1.0.0-beta.1.5.11'
 M.milestone = 'J0 à J8 (qualification, course, mesure, DRS, ERS, interface, persistance), chargement dans la voiture, affinage, pluie, '
   .. 'activation, mémoire du circuit, validation avant enregistrement, vos temps réels, vos retouches gardées'
 M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus récente est ignorée
@@ -201,14 +201,20 @@ M.K = {
   raceFinishSettle = 3,       -- s après l'arrivée avant le calcul du setup de course (dernier tour enregistré)
   updateCheckFrame = 300,    -- mise à jour : vérifiée après ~5 s (images), une fois par lancement
   contextPeriod = 1.0,        -- détection de contexte (s)
-  fpsTarget = 60,             -- en dessous, la tranche est réduite
-  slowFpsSliceFactor = 0.25,  -- fraction de tranche conservée sous fpsTarget
+  -- tranche réduite seulement quand les images/s chutent nettement sous la moyenne habituelle du joueur (décision de
+  -- Vincent du 12/11/2026 : un plafond choisi, VR à 45 i/s ou limiteur à 58, ne ralentit plus les calculs), ou sous
+  -- fpsFloor
+  fpsNominal = 60,            -- images/s supposées quand elles sont illisibles (durée estimée)
+  fpsDropRatio = 0.85,        -- chute : sous 85 % de la moyenne habituelle
+  fpsAvgAlpha = 0.002,        -- moyenne habituelle : filtre par image (environ 8 s à 60 i/s)
+  fpsFloor = 20,              -- en dessous, toujours réduite
+  slowFpsSliceFactor = 0.25,  -- fraction de tranche conservée pendant une chute
   workQuotaFallback = 200,    -- unités de travail par tranche sans horloge précise
   sliceMinMs = 0.25,          -- tranche minimale quand la frame a déjà travaillé (fin de tour) : une unité au moins
   -- chargement d'un setup SetupLab dans la voiture (D8 amendé le 20/10/2026, décision de Vincent)
   loadRepeatFrames = 30,      -- chargement en un clic (1.5.3) : le même fichier redemandé dans ces images (double clic)
                               -- ne recharge rien
-  loadVerifyFrames = 120,     -- images pour constater le setup chargé (signature en direct)
+  loadVerifySeconds = 2,      -- s pour constater le setup chargé (signature en direct), quelle que soit la fréquence d'images
   loadMaxSpeedKmh = 1,        -- voiture considérée arrêtée au stand
   loopSwitchCalls = 30,       -- appels d'affilée de l'autre source avant bascule de la boucle
   unitDecay = 0.9,            -- décroissance de l'estimation d'une unité de travail (rendu prédictif)
@@ -231,7 +237,14 @@ M.K = {
   storeMaxString = 120,       -- chaîne stockée au plus (caractères sûrs seulement)
   storeCalTempTol = 10,       -- calibration reprise d'une séance précédente : piste à 10 °C près
   minHeightMargin = 0.001,    -- marge sur MIN_HEIGHT (m) : hauteur statique prévue, pas mesurée
-  modelVersion = 3,           -- version du modèle : une calibration ou une rugosité stockée par une autre est ignorée
+  modelVersion = 4,           -- version du modèle : une calibration ou une rugosité stockée par une autre est ignorée
+                              -- (4 : 1.5.11, carrossage, ABS, inertie, roulement, portance, pointe des hybrides)
+  rollingLoadScale = 0.001,   -- résistance au roulement : charge × ROLLING_RESISTANCE_n / 1000 (1.5.11)
+  packerGapMin = 0.0005,
+  springUnitRatioMin = 0.2,   -- ressort du setup / ressort de suspensions.ini : hors de [0,2 ; 5], unité douteuse (1.5.11)
+  springUnitRatioMax = 5,      -- m : course avant butée restante quand la voiture est déjà sur ses butées au repos
+  camberFactorMin = 0.5,      -- facteur de carrossage borné (données de pneus non fiables, D11)
+  camberFactorMax = 1.2,
                               -- (3 : 1.5.10, vitesse de pointe au limiteur, réglages verrouillés à leur valeur montée)
   validateTolAbs = 0.15,      -- §14.1 : gain mesuré conforme au prévu à 0,15 s près…
   validateTolRel = 0.3,       -- … ou à 30 % du gain prévu (le plus large des deux)
@@ -282,7 +295,7 @@ M.K = {
   curvatureBaseM = 8,         -- base du cercle à trois points pour la courbure (m) ; 8 m : peu sensible au bruit d'une
                               -- ligne IA de mod (relecture du 29/10/2026)
   curvatureSmoothM = 3,       -- écart type du lissage gaussien de la courbure (m)
-  kappaMax = 1 / 6,           -- courbure maximale admise (rayon 6 m)
+  kappaMax = 1 / 4,           -- courbure maximale admise (rayon 4 m : épingles de karting ; 6 m avant la 1.5.11)
   slopeBaseM = 10,            -- base de la pente et de la courbure verticale (m)
   slopeSmoothM = 8,           -- lissage de la pente (m)
   bankSmoothM = 8,            -- lissage du dévers (m)
@@ -344,8 +357,13 @@ M.K = {
   brakeLockPenaltySec = 0.5,  -- H15 : pénalité de stabilité par unité d'excès de couple au-delà de la marge
   qualiTyreKm = 1,            -- qualification : pic de WEAR_CURVE dans le premier km virtuel
   camberRecovery = 0.5,       -- part du roulis compensée par la cinématique (non lue dans les fichiers)
-  drivetrainEfficiency = 0.9, -- rendement de transmission (calibré au J5)
-  aeroIterations = 3,         -- itérations appui ↔ écrasement de la suspension
+  drivetrainEfficiency = 1.0, -- 1.5.11 : courbe de couple appliquée aux roues sans perte (comme AC) ; l'inertie des pièces
+                              -- en rotation (CarModel, inertiaMass) ralentit l'accélération (avant : 0,9 sur tous les rapports)
+  defaultEngineInertia = 0.1, -- kg·m², moteur sans INERTIA dans engine.ini (ordre de grandeur des voitures du banc)
+  defaultGearboxInertia = 0.02, -- kg·m², valeur par défaut d'AC (commentaire Kunos de drivetrain.ini)
+  defaultWheelInertia = 1.5,  -- kg·m², roue sans ANGULAR_INERTIA dans tyres.ini (ordre de grandeur des voitures du banc)
+  aeroIterations = 8,         -- itérations appui ↔ écrasement de la suspension, au plus (moyennées, 1.5.11)
+  aeroTolerance = 1e-4,       -- m : arrêt quand la hauteur ne bouge plus de plus de 0,1 mm
   ayMaxG = 8,                 -- borne de recherche de l'accélération latérale (g)
   lateralTolerance = 0.0005,  -- résolution de l'accélération latérale maximale (m/s²)
   lateralBracket = 0.25,      -- premier pas de l'encadrement autour de la valeur voisine (m/s²)
@@ -470,6 +488,7 @@ M.K = {
   exportLapStepM = 5,         -- pas du tour exporté (m)
   recorderMinStartSpeed = 5,  -- premier échantillon plus lent : départ arrêté (m/s)
   recorderTimeTolerance = 0.1,  -- écart toléré entre temps officiel et chrono relevé avant la ligne (s)
+  recorderTimeFrameMargin = 0.02, -- s ajoutées à la durée de l'image du passage de ligne (tolérance du temps officiel)
   recorderTimeWait = 1,       -- attente maximale d'un temps officiel à jour (s)
   recorderMaxKnownSetups = 6, -- setups connus (calibration) conservés au plus
   drsProbeMax = 40,           -- bascules du volet DRS mesurées au plus (H8)
@@ -515,6 +534,7 @@ M.K = {
   estimateEnvelopePasses = 6, -- passes d'enveloppe supérieure des ajustements
   estimateCgFront = 0.45,     -- répartition avant prise sans charges de roue mesurables
   estimateWheelRadius = 0.33, -- rayon de roue nominal du modèle estimé (m)
+  estimateCornerMaxAx = 2.5,  -- m/s² : point de virage gardé pour l'appui seulement sous cette accélération longitudinale
   estimateGearMinSpeed = 5,   -- rapports de boîte : échantillons au-delà de 5 m/s
   estimateRpmMinFraction = 0.4,  -- régime bas de la courbe estimée : 40 % du régime maximal
 

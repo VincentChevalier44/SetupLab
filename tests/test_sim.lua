@@ -330,8 +330,11 @@ tests['S08 sensibilités : sens physique des réglages'] = function()
   local times45 = r.lap(function(s) s.camberF = -4.5 end).time
   T.ok(times6 >= times45 - 1e-6, 'carrossage extrême jamais récompensé')
   -- barre avant : la voiture sous-vire (E < 1) ; assouplir l'avant rapproche E de 1
+  -- 1.5.11 : avec le carrossage qui rapporte de l'adhérence, la Huracán de Spa survire légèrement (E ≈ 1,04) ; le sens
+  -- de l'effet est vérifié : assouplir l'avant reporte le transfert sur l'arrière (E monte), raidir l'avant l'inverse
   local soft = r.lap(function(s) s.arbF = s.arbF * 0.5 end)
-  T.ok(ref.balanceMean < 1 and soft.balanceMean > ref.balanceMean, 'barre avant et équilibre')
+  local stiff = r.lap(function(s) s.arbF = s.arbF * 2 end)
+  T.ok(soft.balanceMean > ref.balanceMean and stiff.balanceMean < ref.balanceMean, 'barre avant et équilibre')
   -- facteurs de calibration : adhérence et puissance en plus, plus rapide
   local factors = CarModel.defaultFactors()
   factors.mu = 1.05

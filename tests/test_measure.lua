@@ -63,8 +63,9 @@ local function trueProfile(app, factors, deltas, tyres, slot, fuel)
   local d = app.discovery
   local setup = app.physicalSetup(d, deltas, slot)
   setup.fuel = fuel or 30
+  -- tours « vrais » roulés avec l'ABS de la voiture, comme dans AC (1.5.11 : le freinage avec ABS est modélisé à part)
   local conditions = { airTemp = d.conditions.airTemp, roadGrip = d.conditions.roadGrip, surfaceGrip = d.conditions.surfaceGrip,
-    factors = factors }
+    factors = factors, absActive = app.absActiveOf and app.absActiveOf(d) or nil }
   for key, value in pairs(tyres or {}) do conditions[key] = value end
   local eff = assert(CarModel.configure(d.carBase, setup, conditions))
   local result, buf = Sim.run(d.trackModel, eff, nil)

@@ -82,6 +82,10 @@ local app = {
   fileOps = {},              -- rangement des fichiers en attente (voiture arrêtée) : Corbeille, meilleur tour dans le nom
   filesNote = nil,           -- dernier rangement fait (affiché sous le nom du setup)
   written = {},              -- nom de fichier -> empreinte du contenu écrit par SetupLab (chargeable, D8 amendé)
+  writtenGen = 0,            -- compteur des changements de written (relecture des setups de qualification)
+  -- lectures réussies de la voiture et du circuit, gardées pendant le lancement d'AC (décision de Vincent du 12/11/2026) :
+  -- une découverte ne relit plus les fichiers ni la ligne IA (appels de CSP longs, à-coups en roulant)
+  readCache = {},
   memory = {},               -- « séance|état » -> setup validé de ce circuit (figé ou non), fichier relu et vérifié
   memoryFiles = {},          -- chemin -> fichier de la mémoire relu (empreinte, texte, signature, instant de la relecture)
   loaded = {},               -- genre -> valeurs du dernier setup chargé par SetupLab (retouches du pilote)
@@ -457,7 +461,9 @@ local function conditionsOf(d)
   local grip, gripIgnored = TrackModel.normalizeGrip(v.roadGrip)
   return { airTemp = v.ambientTemperature, roadTemp = v.roadTemperature, roadGrip = grip, roadGripIgnored = gripIgnored,
     surfaceGrip = d.trackModel and d.trackModel.surfaceGrip or 1,
-    fuelRate = fuelRate and math.max(1, fuelRate) or nil, wearRate = rate(v.tyreConsumptionRate, assists.tyresWear) }
+    fuelRate = fuelRate and math.max(1, fuelRate) or nil, wearRate = rate(v.tyreConsumptionRate, assists.tyresWear),
+    -- ABS du moment (1.5.11) : le temps du setup actuel affiché est simulé comme le calcul le simule
+    absActive = app.absActiveOf and app.absActiveOf(d) or nil }
 end
 
 -- Profil du circuit sur le tour simulé avec le setup actuel : virages par vitesse d'apex (lents, moyens, rapides),
@@ -563,8 +569,18 @@ local function discover(ctx)
     pitApi = Caps.pitApiPresent(host) }
   d.session = Datasource.readSession(host)
   ctx.tick()
-  d.car = Datasource.readCar(host, 0, ctx)
-  d.fingerprint = Datasource.fingerprint(d.car, ctx.tick)
+  local cache = app.readCache
+  local _, carId = Util.callHost(Util.get(host.ac, 'getCarID'), 0)
+  if cache.car and type(carId) == 'string' and cache.carId == carId then
+    d.car, d.fingerprint, d.carCached = cache.car, cache.fingerprint, true
+  else
+    d.car = Datasource.readCar(host, 0, ctx)
+    d.fingerprint = Datasource.fingerprint(d.car, ctx.tick)
+    -- seulement une lecture complète (fichiers de base lus) : une lecture en échec est refaite à la découverte suivante
+    if type(carId) == 'string' and d.car.id == carId and d.car.ini['car.ini'] and d.car.ini['tyres.ini'] then
+      cache.car, cache.carId, cache.fingerprint = d.car, carId, d.fingerprint
+    end
+  end
   d.carState = Datasource.readCarState(host, 0)
   ctx.tick()
   d.telemetry = Datasource.telemetryCheck(host, 0)
@@ -617,11 +633,21 @@ local function discover(ctx)
     end
     ctx.tick()
   end
-  d.trackFiles = Datasource.readTrackFiles(host, ctx)
-  d.track = Datasource.sampleTrack(host, app.settings.ds, ctx)
-  -- sans ligne IA : ligne reconstituée depuis un tour enregistré (reconnaissance, A14)
-  if not d.track.ok and app.reconnaissance and app.reconnaissance.ok then d.track = app.reconnaissance end
-  Datasource.probeBank(host, d.track, ctx)
+  local _, fullId = Util.callHost(Util.get(host.ac, 'getTrackFullID'), '/')
+  local trackKey = type(fullId) == 'string' and (fullId .. '|' .. tostring(app.settings.ds)) or nil
+  if cache.track and trackKey and cache.trackKey == trackKey then
+    d.trackFiles, d.track, d.trackCached = cache.trackFiles, cache.track, true
+  else
+    d.trackFiles = Datasource.readTrackFiles(host, ctx)
+    d.track = Datasource.sampleTrack(host, app.settings.ds, ctx)
+    -- sans ligne IA : ligne reconstituée depuis un tour enregistré (reconnaissance, A14)
+    if not d.track.ok and app.reconnaissance and app.reconnaissance.ok then d.track = app.reconnaissance end
+    Datasource.probeBank(host, d.track, ctx)
+    -- ligne IA lue en entier : gardée (une ligne reconstituée d'un tour, ou une lecture en échec, ne l'est jamais)
+    if d.track.ok and trackKey and d.track.source == 'ligne IA' then
+      cache.trackFiles, cache.track, cache.trackKey = d.trackFiles, d.track, trackKey
+    end
+  end
   -- D7 : une erreur du modèle de circuit ne doit pas faire échouer toute la découverte.
   local okModel, model, why = pcall(TrackModel.build, d.track, d.trackFiles, app.settings.ds, ctx.tick)
   if okModel then
@@ -668,6 +694,8 @@ local function scheduleReport(d)
     if ok and app.discovery == d then
       app.report, app.reportTruncated = result.text, result.truncated
     elseif not ok and result ~= 'cancelled' then
+      -- une erreur du rapport se reproduirait à l'identique : pas de nouvel essai à chaque seconde
+      d.reportFailed = true
       log('ERROR', 'report', result)
     end
   end)
@@ -819,6 +847,20 @@ local function onDiscovered(ok, result, cpuMs)
     result.durationMs = cpuMs
     app.discovery, app.lastDiscovery = result, result
     app.discoveryState = 'done'
+    -- courbes de pneu non lues (1.5.11) : dites une fois par découverte
+    local ignored = {}
+    for _, c in ipairs(result.carBase and result.carBase.compounds or {}) do
+      for _, tyre in ipairs({ c.front, c.rear }) do
+        for _, key in ipairs(tyre and tyre.ignoredCurves or {}) do ignored[key] = true end
+      end
+    end
+    local names = {}
+    for key in pairs(ignored) do names[#names + 1] = key end
+    table.sort(names)
+    if #names > 0 then
+      log('WARN', 'tyre_curves', 'Courbes de pneu non lues par le modèle (' .. table.concat(names, ', ')
+        .. ") : adhérence d'après DY_REF, LS_EXPY et DCAMBER, à confirmer par la calibration")
+    end
     -- setup physique de la découverte, conservé pour la calibration (même voiture, même circuit)
     if result.space and result.carBase and #result.carBaseMissing == 0 then
       local known = app.knownSetups[result.signature] or { label = 'setup de la découverte' }
@@ -855,6 +897,12 @@ local function startDiscovery()
   app.discoverySeq = app.loadSeq or 0
   app.conditionsKey = app.context and app.context.conditionsKey or nil
   app.pendingSessionKey = nil
+  -- lectures de la découverte faites une fois ici, sur le fil principal, pour le rapport J0 (issue n° 2) ; jamais en
+  -- ligne en pause ni en replay (la découverte ne démarre pas alors)
+  if app.static and app.static.mainProbe == nil then
+    local okP, probe = pcall(Caps.probeMain, host)
+    app.static.mainProbe = okP and probe or {}
+  end
   Util.schedulerAdd(app.scheduler, 'discovery', discover, onDiscovered)
 end
 
@@ -968,8 +1016,12 @@ local function refreshContext()
   if inert ~= app.inert then
     app.inert = inert
     if inert then
-      Util.schedulerCancel(app.scheduler)
-      app.pendingComputes = {}
+      -- replay, pause en ligne (décision de Vincent du 12/11/2026) : calculs gelés (l'ordonnanceur ne tourne plus), repris
+      -- au retour ; contexte illisible : rien n'est sûr, tout est annulé
+      if not c.ok then
+        Util.schedulerCancel(app.scheduler)
+        app.pendingComputes = {}
+      end
       log('INFO', 'inert', inert)
     end
   end
@@ -1025,7 +1077,8 @@ local function refreshContext()
     startDiscovery()
   elseif app.discoveryState == 'idle' then
     startDiscovery()
-  elseif app.discoveryState == 'done' and app.report == nil and not Util.schedulerBusy(app.scheduler) then
+  elseif app.discoveryState == 'done' and app.report == nil and not app.discovery.reportFailed
+      and not Util.schedulerBusy(app.scheduler) then
     scheduleReport(app.discovery)
   end
   -- nouvelle séance (type, numéro) : nouvelle découverte, une fois la séance confirmée par deux
@@ -1068,6 +1121,12 @@ local function refreshContext()
   local raceState = raceSession() and (raceOver() and 'arrivée' or (raceRunning() and 'course lancée' or 'avant le départ'))
     or nil
   if raceState ~= app.raceState then
+    -- course recommencée après l'arrivée : la prochaine arrivée sera annoncée de nouveau
+    if app.raceState == 'arrivée' then
+      for _, r in pairs(app.refines or {}) do
+        for _, e in ipairs(r.history or {}) do e.finishNoticed = nil end
+      end
+    end
     app.raceState = raceState
     app.raceFinishAt = raceState == 'arrivée' and app.now or nil
     if raceState then log('INFO', 'race', 'Séance de course : ' .. raceState) end
@@ -1128,6 +1187,7 @@ local function startCalibration(compoundIndex, bucket)
   app.calibrations[key] = c
   app.calibration = c
   local track, base = d.trackModel, d.carBase
+  local absNow = app.absActiveOf and app.absActiveOf(d) or nil
   Util.schedulerAdd(app.scheduler, 'calibration', function(ctx)
     local runs = {}
     for _, pair in ipairs(chosen) do
@@ -1136,6 +1196,8 @@ local function startCalibration(compoundIndex, bucket)
         local conditions, fuel = Calibration.lapConditions(pair.lap)
         conditions.surfaceGrip = track.surfaceGrip
         conditions.roughness = d.conditions and d.conditions.roughness
+        -- tours roulés avec l'ABS du moment (1.5.11 : le freinage avec ABS est modélisé à part)
+        conditions.absActive = absNow
         -- tour roulé avec l'ERS : simulé avec son déploiement relevé (sinon la puissance l'absorberait)
         if d.ers and d.ers.enabled and measured.ers then conditions.ersSpec = base.ers end
         local setup = {}
@@ -1256,12 +1318,14 @@ local function startValidation(kind)
   app.validations[kind] = v
   Util.schedulerCancel(app.scheduler, 'validation_' .. kind)
   local track, base = d.trackModel, d.carBase
+  local absNow = app.absActiveOf and app.absActiveOf(d) or nil
   Util.schedulerAdd(app.scheduler, 'validation_' .. kind, function(ctx)
     local function predict(known, lap)
       local conditions, fuel = Calibration.lapConditions(lap)
       conditions.surfaceGrip = track.surfaceGrip
       conditions.roughness = d.conditions and d.conditions.roughness
       conditions.factors = proposed.factors
+      conditions.absActive = absNow
       local setup = {}
       for key, value in pairs(known.setup) do setup[key] = value end
       if fuel then setup.fuel = fuel end
@@ -1537,11 +1601,35 @@ local function inertNow(sim)
   return online and onlinePause(true) ~= nil
 end
 
+-- Écriture du stockage ; chaque entrée retirée par la purge (stockage plein) est journalisée.
+function app.storeFlush()
+  local written = Store.flush(app.store)
+  local purged = app.store.purged
+  if purged then
+    app.store.purged = nil
+    for _, key in ipairs(purged) do log('INFO', 'store_purge', 'Stockage plein : entrée retirée (' .. key .. ')') end
+  end
+  return written
+end
+
+
+-- Images/s en chute (tranche de calcul réduite) : nettement sous la moyenne habituelle du joueur, ou sous K.fpsFloor.
+function app.fpsSlow(fps)
+  if not Util.isFinite(fps) or fps <= 0 then return false end
+  if fps < K.fpsFloor then return true end
+  local avg = app.perf.fpsAvg
+  return Util.isFinite(avg) and fps < avg * K.fpsDropRatio or false
+end
+
 local function update(dt)
   app.frameNo = (app.frameNo or 0) + 1
   if not app.settings.enabled then return end
   local frameStarted = app.clock and app.clock() or nil
   local okSim, sim = Util.call(Util.get(host.ac, 'getSim'))
+  local fps = okSim and Util.num(sim, 'fps') or nil
+  -- moyenne habituelle d'abord (l'image courante n'y pèse presque rien) : la chute se compare à ce qui précède
+  local slowNow = app.fpsSlow(fps)
+  if fps and fps > 0 then app.perf.fpsAvg = Util.ema(app.perf.fpsAvg, fps, K.fpsAvgAlpha) end
   local simTime = okSim and Util.get(sim, 'time') or nil
   if Util.isFinite(simTime) then
     app.now = simTime / 1000
@@ -1552,7 +1640,8 @@ local function update(dt)
   if app.now >= app.nextContextAt then
     app.nextContextAt = app.now + K.contextPeriod
     refreshContext()
-    if not app.inert then Store.flush(app.store) end
+    -- rien n'est écrit en replay ni en pause en ligne (I09) ; le mode en ligne s'écrit à part, tout de suite
+    if not app.inert then app.storeFlush() end
   end
   if okSim and not inertNow(sim) then
     app.recordContext.paused = Util.get(sim, 'isPaused') == true
@@ -1563,7 +1652,8 @@ local function update(dt)
   if app.auto and app.autoTick then app.autoTick() end
   if app.raceSetupWatch then app.raceSetupWatch() end
   if app.refine and app.refine.active then app.refineTick() end
-  -- mise à jour : une seule vérification par lancement d'AC, quelques secondes après le démarrage (hors ligne)
+  -- mise à jour : une seule vérification par lancement d'AC, quelques secondes après le démarrage (jamais en replay ni
+  -- en pause en ligne)
   if app.updater.state == 'idle' and app.settings.updateCheck and app.frameNo >= K.updateCheckFrame and not app.inert then
     if Updater.check(app.updater, host, Config.version) then
       log('INFO', 'update', 'Recherche d\'une mise à jour (GitHub)')
@@ -1583,6 +1673,8 @@ local function update(dt)
       log('INFO', 'update_result', 'Mise à jour non vérifiée : ' .. tostring(u.why))
     end
   end
+  -- constat d'un chargement, fenêtres fermées (sinon l'interface le suit, après ses clics de l'image)
+  if app.loadCheck and app.loadTick and (app.frameNo or 0) - (app.uiDrawFrame or -10) > 2 then app.loadTick() end
   if #app.fileOps > 0 and app.fileOpsTick then
     local okF, errF = pcall(app.fileOpsTick)
     if not okF then
@@ -1590,6 +1682,7 @@ local function update(dt)
       log('ERROR', 'files', errF)
     end
   end
+  if app.scheduler.callbackErrors then app.schedulerErrors() end
   if app.inert or not Util.schedulerBusy(app.scheduler) then return end
   if app.perf.skipNext then
     app.perf.guardSkips = app.perf.guardSkips + 1
@@ -1597,9 +1690,8 @@ local function update(dt)
   end
   local budget = app.settings.sliceBudgetMs / 1000
   local quota = K.workQuotaFallback
-  local fps = okSim and Util.get(sim, 'fps') or nil
   -- après votre arrivée (séance de course) : la course est finie, le calcul du setup de course passe à pleine part
-  if Util.isFinite(fps) and fps > 0 and fps < K.fpsTarget and not (raceSession() and raceOver()) then
+  if slowNow and not (raceSession() and raceOver()) then
     budget, quota = budget * K.slowFpsSliceFactor, math.max(1, math.floor(quota * K.slowFpsSliceFactor))
     app.perf.slowFrames = app.perf.slowFrames + 1
   end
@@ -1607,8 +1699,20 @@ local function update(dt)
   -- du passage de ligne reste dans son budget (§14.3). Le résultat ne dépend pas du découpage (Q11).
   if frameStarted then budget = math.max(K.sliceMinMs / 1000, budget - (app.clock() - frameStarted)) end
   local stats = app.scheduler.stats
-  if Util.schedulerStep(app.scheduler, app.clock, budget, quota) and stats.lastSliceMs > K.sliceAlertMs then
-    app.perf.slowSlices = app.perf.slowSlices + 1
+  if Util.schedulerStep(app.scheduler, app.clock, budget, quota) then
+    app.perf.frameSliceMs = stats.lastSliceMs
+    if stats.lastSliceMs > K.sliceAlertMs then app.perf.slowSlices = app.perf.slowSlices + 1 end
+  end
+end
+
+-- Erreurs des rappels de fin de tâche (Util.schedulerCallback) : journalisées et comptées.
+function app.schedulerErrors()
+  local errors = app.scheduler.callbackErrors
+  if errors == nil then return end
+  app.scheduler.callbackErrors = nil
+  for _, text in ipairs(errors) do
+    app.perf.errors = app.perf.errors + 1
+    log('ERROR', 'task_done', text)
   end
 end
 
@@ -1659,6 +1763,11 @@ local function qualiBlocker()
   local d = app.discovery
   if d.trackModel == nil then return 'modèle du circuit indisponible (' .. tostring(d.trackModelReason) .. ')' end
   if d.carModelError then return 'modèle de la voiture en erreur (' .. d.carModelError .. ')' end
+  -- fichiers de la voiture tous illisibles (1.5.11, issue n° 2) : dire quoi faire plutôt que la liste des paramètres
+  if d.car and d.car.ini['car.ini'] == nil and d.car.ini['tyres.ini'] == nil then
+    return 'données de cette voiture illisibles par CSP (voiture protégée, ou CSP trop ancienne) : roulez un tour propre '
+      .. "pour le mode mesure uniquement (onglet MESURE) ; rapport J0 à copier depuis l'onglet DIAGNOSTIC"
+  end
   if d.carBase == nil or #d.carBaseMissing > 0 then
     return 'modèle de la voiture incomplet (' .. table.concat(d.carBaseMissing or {}, ', ') .. ')'
   end
@@ -1752,6 +1861,8 @@ local function changedSetting(d)
   local live = Datasource.readSetup(host, Util.syncContext(), d.car and d.car.ini['setup.ini'], d.car and d.car.ratios)
   local liveValues = {}
   for _, sp in ipairs(live.spinners) do liveValues[sp.name] = sp.value end
+  -- crans illisibles à cet instant : rien n'indique un setup changé (sinon découverte relancée pour rien)
+  if #live.spinners == 0 then return nil, live end
   for name, member in pairs(d.space.members) do
     if liveValues[name] ~= member.current then return name, live end
   end
@@ -1819,6 +1930,8 @@ local function absActiveOf(d)
   if abs == 'on' then return true end
   return nil
 end
+
+app.absActiveOf = absActiveOf
 
 -- fromPending : calcul lancé à la fin de la découverte qu'il attendait (pas de nouvelle relance).
 local function startCompute(kind, fromPending)
@@ -1942,6 +2055,7 @@ local function startCompute(kind, fromPending)
     local args = {
       base = d.carBase, space = d.space, track = d.trackModel, conditions = conditions,
       settings = settings, fuelPerLap = d.carState.ok and d.carState.values.fuelPerLap or nil, budget = budget,
+      fuelNow = d.carState.ok and d.carState.values.fuel or nil,
       compound = d.compoundSlot, compoundChoice = settings.compoundChoice, factorsByCompound = usableFactors(conditions.bucket),
       race = kind == 'race' and raceMeasures(d, conditions.bucket) or nil, drs = d.drs and d.drs.enabled,
       tyres = tyreStateOf(d, conditions.bucket),
@@ -2059,7 +2173,7 @@ local function saveResult(kind)
   local hash = Util.hashString(text)
   if r.ok then
     r.text = text
-    app.written[r.name] = hash
+    app.written[r.name] = hash; app.writtenGen = app.writtenGen + 1
   end
   q.saved = r
   -- setup proposé connu : ses tours serviront à la validation et à la calibration (§14.1) ; un autre
@@ -2115,8 +2229,9 @@ local function saveResult(kind)
 end
 
 -- Chargement d'un setup enregistré dans la voiture (D8 amendé le 20/10/2026, décision de Vincent) :
--- seulement le dernier fichier qualification ou course écrit par SetupLab, au stand, voiture arrêtée,
--- menu de setup ouvert, en un clic depuis la 1.5.3 (décision de Vincent du 02/11/2026), après une copie de
+-- seulement un fichier écrit par SetupLab (versions validées, essais, mémoire du circuit, copies « Avant chargement »),
+-- au stand ou sur la grille avant le départ, voiture arrêtée, menu de setup ouvert, en un clic depuis la 1.5.3 (décision
+-- de Vincent du 02/11/2026), après une copie de
 -- sauvegarde du setup en cours quand elle sert ; le setup chargé est ensuite constaté section par section.
 -- Gardes vérifiées au clic (requestLoad). Renvoie la raison d'un refus, ou nil.
 local function loadBlocker(kind)
@@ -2171,14 +2286,10 @@ local function folderNow()
   return folder
 end
 
--- Clé des fichiers écrits par SetupLab : nombre et somme des empreintes des noms (un essai remplacé par un autre de même
--- longueur de nom, ou un renommage avec meilleur tour, la change).
+-- Clé des fichiers écrits par SetupLab : compteur de leurs changements (écriture, renommage avec meilleur tour, Corbeille),
+-- sans parcourir tous les noms à chaque appel (plusieurs fois par image en séance de course).
 local function writtenKey()
-  local count, sum = 0, 0
-  for name in pairs(app.written) do
-    count, sum = count + 1, (sum + (tonumber(Util.hashString(tostring(name))) or 0)) % Util.HASH_MOD
-  end
-  return count .. ':' .. sum
+  return app.writtenGen
 end
 
 local function carStopped()
@@ -2475,7 +2586,7 @@ app.queueBestRename, app.queueFileOp, app.setupValues = queueBestRename, queueFi
 
 -- Un fichier parti à la Corbeille : plus rien ne le désigne.
 local function forgetFile(name)
-  app.written[name] = nil
+  app.written[name] = nil; app.writtenGen = app.writtenGen + 1
   for _, v in ipairs(validatedEntries()) do
     if v.file == name then Store.remove(app.store, v.key) end
   end
@@ -2502,7 +2613,7 @@ end
 
 -- Un fichier renommé : tout ce qui le désignait suit (versions, mémoire, setup à charger, setup chargé).
 local function followRename(old, new, path)
-  app.written[new], app.written[old] = app.written[old], nil
+  app.written[new], app.written[old] = app.written[old], nil; app.writtenGen = app.writtenGen + 1
   for _, v in ipairs(validatedEntries()) do
     if v.file == old then Store.put(app.store, v.key, { file = new, hash = v.hash, version = v.version }, stamp()) end
   end
@@ -2627,11 +2738,11 @@ local function refreshMemory()
           m.problem = 'fichier modifié depuis sa validation'
         elseif cached and cached.text == text then
           m.path, m.text, m.signature, m.family = path, text, cached.signature, cached.family
-          app.written[e.file] = e.hash
+          app.written[e.file] = e.hash; app.writtenGen = app.writtenGen + 1
         else
           m.path, m.text = path, text
           m.signature, m.family = fileSignatures(d, setupValues(text))
-          app.written[e.file] = e.hash
+          app.written[e.file] = e.hash; app.writtenGen = app.writtenGen + 1
           app.memoryFiles[path] = { hash = e.hash, text = text, signature = m.signature, family = m.family, at = app.now }
         end
         app.memory[g.key .. '|' .. bucket] = m
@@ -2647,7 +2758,7 @@ local function refreshMemory()
   -- versions de qualification validées lors d'un lancement précédent (1.5.3) : chargeables par SetupLab (D8 : fichiers
   -- écrits par lui) ; le chargement revérifie leur contenu exact (Exporter.loadBlocker)
   for _, v in ipairs(validatedEntries(d)) do
-    if app.written[v.file] == nil then app.written[v.file] = v.hash end
+    if app.written[v.file] == nil then app.written[v.file] = v.hash; app.writtenGen = app.writtenGen + 1 end
   end
 end
 app.refreshMemory = refreshMemory
@@ -2763,13 +2874,12 @@ local function requestLoad(kind, where)
     refreshCaps()
     return
   end
-  app.loadCheck = { kind = kind, path = saved.path, target = target, already = already, frames = K.loadVerifyFrames,
-    backup = backupNote, backupFile = backupRec }
+  app.loadCheck = { kind = kind, path = saved.path, target = target, already = already,
+    deadline = app.now + K.loadVerifySeconds, backup = backupNote, backupFile = backupRec }
   app.ui.message = 'Chargement demandé : vérification du setup en cours…'
   log('INFO', 'load', 'ac.loadSetup accepté : ' .. saved.path .. ' ; ' .. backupNote)
 end
 
--- À chaque image affichée : constat du setup chargé.
 -- Vos retouches (décision de Vincent du 22/10/2026 : « s'il a calculé un setup, que je l'ai chargé et que je
 -- reviens dans les stands et que je modifie un petit peu le setup, il faut qu'il le prenne en compte ») : à
 -- chaque découverte, un cran différent du dernier setup chargé par SetupLab est une retouche du pilote ; il est
@@ -2915,6 +3025,7 @@ local function applyPit(check)
     or ''))
 end
 
+-- À chaque image affichée (et dans la boucle de calcul, fenêtres fermées) : constat du setup chargé.
 local function loadTick()
   local check = app.loadCheck
   if check == nil then return end
@@ -2981,8 +3092,9 @@ local function loadTick()
     refreshCaps()
     return
   end
-  check.frames = check.frames - 1
-  if check.frames <= 0 then
+  -- horloge revenue en arrière (séance recommencée) : échéance remise à partir de maintenant
+  if check.deadline > app.now + K.loadVerifySeconds then check.deadline = app.now + K.loadVerifySeconds end
+  if app.now >= check.deadline then
     app.loadCheck = nil
     app.loadTest = { ok = false, kind = check.kind, path = check.path,
       reason = 'écart : setup en cours différent du fichier chargé (' .. tostring(section or 'setup illisible') .. ')' }
@@ -3495,7 +3607,6 @@ local function refineFinish(r, q)
   log('INFO', 'refine', app.ui.message)
 end
 
--- À chaque frame (boucle de calcul) : découverte après un chargement, calcul attendu, calcul dû.
 -- Point de départ de l'affinage (demande de Vincent du 26/10/2026 : « soit on part d'un setup par défaut et on fait
 -- affiner le setup par défaut…, si je charge un setup personnel à moi, je dois pouvoir… le faire évoluer ») : choisi une
 -- fois par genre et par séance. « mine » : le setup qui est dans la voiture ; « default » : le setup par défaut de la
@@ -3517,6 +3628,7 @@ local function startWaiting(kind)
   return 'charger le setup de départ au stand (' .. tostring(s.file) .. ')'
 end
 
+-- À chaque image (boucle de calcul) : découverte après un chargement, calcul attendu, calcul dû.
 local function refineTick()
   local r = app.refine
   if not (r and r.active) or app.inert then return end
@@ -3678,6 +3790,11 @@ local function refineStart(kind)
     log('INFO', 'refine', app.ui.message)
     return
   end
+  -- déjà actif, même genre, même séance, même point de départ : rien à refaire (versions et essais gardés)
+  local cur = app.refine
+  if cur and cur.active and cur.kind == kind and cur.sessionKey == app.conditionsKey and cur.startRef == app.start[kind] then
+    return
+  end
   -- un seul affinage actif : celui d'un autre genre s'arrête (il se reprendra tel quel)
   if app.refine and app.refine.active then refineStop() end
   local base = lastVersionOnDisk(kind)
@@ -3775,7 +3892,7 @@ local function writeVersion(r, e)
   end
   e.trial = nil
   e.file, e.path, e.hash, e.ownFile = w.name, w.path, Util.hashString(kept.text), true
-  app.written[w.name] = e.hash
+  app.written[w.name] = e.hash; app.writtenGen = app.writtenGen + 1
   if r.kind == 'quali' then validatedPut(w.name, e.hash, e.version) end
   setLoadTarget(r.kind, e)
   -- tours roulés avec elle : calibration et validation en jeu (§14.1)
@@ -3929,7 +4046,7 @@ local function refineReject(r, e)
     -- mêmes valeurs que la référence : son propre fichier (l'affinage sait qu'il repart d'elle), pas sa copie
     if before and back and back.text and sameSetup(setupValues(before.text), setupValues(back.text)) then before = nil end
     if before then
-      app.written[before.file] = before.hash
+      app.written[before.file] = before.hash; app.writtenGen = app.writtenGen + 1
       setLoadTarget(r.kind, before)
     end
     if app.saved[r.kind] then requestLoad(r.kind) end
@@ -3960,7 +4077,7 @@ local function refineTry(r, e)
       return
     end
     local hash = Util.hashString(e.text)
-    app.written[w.name] = hash
+    app.written[w.name] = hash; app.writtenGen = app.writtenGen + 1
     e.trial = { file = w.name, path = w.path, hash = hash, text = e.text, signature = e.signature, family = e.family,
       bucket = e.bucket, origin = e.origin, carId = e.carId }
     if e.known then rememberSetup(e.signature, e.known) end
@@ -4200,7 +4317,7 @@ local function startChoose(kind, mode)
       app.ui.message = 'Setup par défaut impossible : écriture refusée (' .. tostring(w.reason) .. ').'
       return
     end
-    app.written[w.name] = hash
+    app.written[w.name] = hash; app.writtenGen = app.writtenGen + 1
     local rec = { file = w.name, path = w.path, text = text, hash = hash, bucket = app.wet.state,
       signature = signatureOf(d.setup.spinners, values, d.compoundIndex), carId = d.car and d.car.id }
     setLoadTarget(kind, rec)
@@ -4256,6 +4373,11 @@ end
 -- nouvelle séance (essai -> qualification -> course) : l'affinage suit le genre.
 local function autoTick()
   if not app.auto or app.inert or app.discoveryState ~= 'done' then return end
+  -- nouvelle séance lue mais pas encore confirmée (deuxième relecture du contexte) : rien avant sa découverte, sinon
+  -- l'affinage de la nouvelle séance partirait sur l'ancienne découverte, avec la clé de l'ancienne séance
+  if app.pendingSessionKey or (app.context and app.context.conditionsKey and app.context.conditionsKey ~= app.conditionsKey) then
+    return
+  end
   local kind = autoKind()
   local r = app.refine
   local m = app.memory[memoryGroup(kind) .. '|' .. app.wet.state]
@@ -4291,17 +4413,20 @@ local function applySetting(key, value)
       for _, name in ipairs(Config.EDITABLE) do editable[name] = app.settings[name] end
       Store.put(app.store, 'settings', editable)
       log('INFO', 'setting', def.label .. ' : ' .. tostring(valid))
-      -- mode en ligne : changé même en pause (seule exception), écrit tout de suite (en pause, le stockage n'est pas
-      -- écrit : la case décochée en ligne serait sinon perdue) et pris en compte dès l'image suivante
+      -- mode en ligne : changé même en pause (seule exception), écrit tout de suite et pris en compte dès l'image suivante
       if key == 'onlineActive' then
-        Store.flush(app.store)
+        app.storeFlush()
         app.nextContextAt = 0
       end
     end
   end
 end
 
+-- constat du chargement : aussi suivi fenêtres fermées (boucle de calcul), pas seulement quand l'interface est dessinée
+app.loadTick = loadTick
+
 local function handleIntents(intents)
+  app.uiDrawFrame = app.frameNo or 0
   loadTick()
   -- calcul en attente de la découverte : lancé à sa fin
   if next(app.pendingComputes) and app.discoveryState ~= 'running' then
@@ -4316,6 +4441,8 @@ local function handleIntents(intents)
     end
   end
   if intents.rediscover and not app.inert then
+    -- relancée à la demande : tout est relu (fichiers de la voiture, ligne IA)
+    app.readCache = {}
     log('INFO', 'rediscover', 'Découverte relancée à la demande')
     startDiscovery()
   end
@@ -4463,7 +4590,7 @@ local function handleIntents(intents)
     app.ui.message = 'Mise à jour : au stand, voiture arrêtée (CSP recharge SetupLab juste après).'
   elseif intents.updateApply and canApply then
     -- rien de perdu au rechargement : le stockage est écrit d'abord
-    Store.flush(app.store)
+    app.storeFlush()
     local okA, appDir = Util.call(Util.get(host.ac, 'getFolder'), Util.get(Util.get(host.ac, 'FolderID'), 'ScriptOrigin'))
     local okT, tempDir = Util.call(Util.get(host.ac, 'getFolder'), Util.get(Util.get(host.ac, 'FolderID'), 'AppDataTemp'))
     local version = app.updater.info and app.updater.info.version
@@ -4525,6 +4652,8 @@ app.handleIntents = handleIntents
 local function release()
   if app.released then return end
   app.released = true
+  -- dernières entrées (tour compté, réglage) écrites avant le déchargement de l'app (jamais en mode inerte)
+  if not app.inert then pcall(app.storeFlush) end
   Util.schedulerCancel(app.scheduler)
   for _, dispose in ipairs(app.disposers) do pcall(dispose) end
   app.disposers = {}
@@ -4573,7 +4702,10 @@ local function tick(source, dt)
   perf.lastMs = frameCost
   perf.avgMs = Util.ema(perf.avgMs, frameCost, K.perfEmaAlpha)
   if frameCost > perf.maxMs then perf.maxMs = frameCost end
-  perf.skipNext = frameCost > app.settings.frameGuardMs
+  -- garde : le coût de l'app hors de sa propre tranche de calcul (fenêtres, lecture du contexte, fin de tour) ; sinon une
+  -- fenêtre ouverte plus une tranche faisaient sauter une tranche sur deux
+  perf.skipNext = frameCost - (perf.frameSliceMs or 0) > app.settings.frameGuardMs
+  perf.frameSliceMs = 0
   frameCost = 0
   local ok, err = measure(update, dt)
   if not ok then

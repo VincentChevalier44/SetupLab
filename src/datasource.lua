@@ -16,7 +16,8 @@ local floor, min, huge = math.floor, math.min, math.huge
 -- Accès protégés (un champ absent d'une structure FFI lève une erreur)
 -- ---------------------------------------------------------------------------
 
-local get, call = Util.get, Util.call
+-- appels de CSP : sur le fil principal même depuis une tâche de l'ordonnanceur (Util.callHost, issue n° 2)
+local get, call = Util.get, Util.callHost
 
 local num, bool = Util.num, Util.flag
 
@@ -41,11 +42,12 @@ local function callString(fn, ...)
   return nil
 end
 
+-- Dossier connu de CSP : chemin complet, jamais tronqué (un chemin coupé désignerait un autre dossier).
 local function folder(ac, folderName)
   local id = get(get(ac, 'FolderID'), folderName)
   if id == nil then return nil end
-  local value = callString(get(ac, 'getFolder'), id)
-  if value == nil or value == '' then return nil end
+  local ok, value = call(get(ac, 'getFolder'), id)
+  if not ok or type(value) ~= 'string' or value == '' or #value > TM.path then return nil end
   return value
 end
 
@@ -232,8 +234,8 @@ local function lutFromHandle(handle, tick)
   local xs, ys = {}, {}
   for i = 0, K.maxLutPoints - 1 do
     if i % 256 == 255 then tick() end
-    local okx, x = pcall(getIn, handle, i)
-    local oky, y = pcall(getOut, handle, i)
+    local okx, x = call(getIn, handle, i)
+    local oky, y = call(getOut, handle, i)
     if not (okx and oky) or not Util.isFinite(x) or not Util.isFinite(y) then break end
     xs[#xs + 1], ys[#ys + 1] = x, y
   end

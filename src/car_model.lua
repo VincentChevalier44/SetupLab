@@ -57,6 +57,8 @@ local function readTyre(car, section, thermal)
     pressureStatic = n('PRESSURE_STATIC'), pressureIdeal = n('PRESSURE_IDEAL'), pressureDGain = n('PRESSURE_D_GAIN') or 0,
     rr0 = n('ROLLING_RESISTANCE_0') or 0, rr1 = n('ROLLING_RESISTANCE_1') or 0, rate = n('RATE'),
     pressureSpringGain = n('PRESSURE_SPRING_GAIN') or 0,
+    -- inertie de la roue (jante, pneu, disque, kg·m²) : masse équivalente à l'accélération (1.5.11)
+    angularInertia = n('ANGULAR_INERTIA'),
     -- carrossage apporté par la déformation du pneu à la limite : CAMBER_GAIN × FRICTION_LIMIT_ANGLE (°)
     deformCamber = math.rad((n('CAMBER_GAIN') or 0) * (n('FRICTION_LIMIT_ANGLE') or 0)),
     wear = lut(car, Util.iniGet(car.ini['tyres.ini'], section, 'WEAR_CURVE')),
@@ -70,9 +72,14 @@ local function readTyre(car, section, thermal)
     return nil
   end
   if t.fz0 and t.fz0 <= 0 then t.fz0 = nil end
+  -- courbes de pneu que le modèle ne lit pas (1.5.11) : dites au journal (l'adhérence et sa sensibilité à la charge
+  -- viennent alors de DY_REF, LS_EXPY et DCAMBER_n, valeurs moyennes de ces courbes)
+  t.ignoredCurves = {}
+  for _, key in ipairs({ 'DY_CURVE', 'DX_CURVE', 'DCAMBER_LUT' }) do
+    if Util.iniGet(car.ini['tyres.ini'], section, key) then t.ignoredCurves[#t.ignoredCurves + 1] = key end
+  end
   if t.lsExpY and (t.lsExpY < 0.1 or t.lsExpY > 1.5) then t.lsExpY = nil end
-  -- Sommet de la parabole de carrossage : au-delà, la formule Kunos redonnerait de l'adhérence ; l'effet
-  -- y est gardé constant (prudence §0.6 : l'optimiseur ne doit pas exploiter cet artefact).
+  -- carrossage utile du meilleur effet (rad), affiché seulement : DCAMBER_0 / (−2·DCAMBER_1)
   if t.dcamber0 > 0 and t.dcamber1 < 0 then t.camberPeak = t.dcamber0 / (-2 * t.dcamber1) end
   return t
 end
@@ -441,6 +448,9 @@ function M.build(car, state, tick)
   p.gears = readGears(car)
   p.final = iniNum(car, 'drivetrain.ini', 'GEARS', 'FINAL')
   p.shiftUpTime = (iniNum(car, 'drivetrain.ini', 'GEARBOX', 'CHANGE_UP_TIME') or 100) / 1000
+  -- inerties du moteur et de la boîte (kg·m², 1.5.11) : masse équivalente par rapport, au lieu d'un rendement fixe
+  p.engineInertia = iniNum(car, 'engine.ini', 'ENGINE_DATA', 'INERTIA')
+  p.gearboxInertia = iniNum(car, 'drivetrain.ini', 'GEARBOX', 'INERTIA')
   -- Différentiel de l'essieu moteur arrière : [DIFFERENTIAL], ou REAR_DIFF_* de [AWD] en transmission intégrale.
   local diffSection, prefix = 'DIFFERENTIAL', ''
   if p.traction == 'AWD' then diffSection, prefix = 'AWD', 'REAR_DIFF_' end
@@ -490,6 +500,13 @@ function M.build(car, state, tick)
     p.rideHeightR = state.rideHeight[2]
     -- carburant au moment de la mesure : référence de l'écrasement statique (hauteur d'un autre setup)
     p.rideRefFuel = values.fuel
+    -- course de suspension au repos, relevée au stand (depuis la détente, comme PACKER_RANGE ; H16, 1.5.11)
+    local function travel(i, j)
+      local a, b = state.wheels[i] and state.wheels[i].suspensionTravel, state.wheels[j] and state.wheels[j].suspensionTravel
+      if Util.isFinite(a) and Util.isFinite(b) and a >= 0 and b >= 0 and a + b < 0.5 then return (a + b) / 2 end
+      return nil
+    end
+    p.staticTravelF, p.staticTravelR = travel(1, 2), travel(3, 4)
   else
     -- hors jeu : jamais sous la hauteur minimale réglementaire de la voiture
     p.rideHeightF = source(src, 'rideHeight', max(K.defaultRideHeightF, p.minHeight + K.rideHeightMargin), 'default')
@@ -533,6 +550,8 @@ function M.fromParams(p)
   p.rideHeightF = p.rideHeightF or K.defaultRideHeightF
   p.rideHeightR = p.rideHeightR or K.defaultRideHeightR
   p.arbF, p.arbR = p.arbF or 0, p.arbR or 0
+  -- raideurs lues dans suspensions.ini (contrôle des unités des ressorts du setup, SetupSpace.verify)
+  p.springFileF, p.springFileR = p.springF, p.springR
   p.springF, p.springR = p.springF or 100000, p.springR or 100000
   p.heaveF, p.heaveR = p.heaveF or 0, p.heaveR or 0
   p.rodF, p.rodR = p.rodF or 0, p.rodR or 0
@@ -727,13 +746,15 @@ end
 -- Multiplicateur d'adhérence hors charge et hors carrossage dynamique : pression, température, usure.
 -- hotPsi : pression à chaud de l'essieu (mesurée, ou déduite par configure) ; temp, km : température et
 -- km virtuels de l'essieu (relais, tour mesuré), sinon ceux de conditions.
-local function gripMultiplier(tyre, coldPsi, conditions, hotPsi, temp, km)
+-- ideal (facultatif) : pression idéale de référence à la place de PRESSURE_IDEAL (comparaison des composés, 1.5.11).
+local function gripMultiplier(tyre, coldPsi, conditions, hotPsi, temp, km, ideal)
   temp = temp or conditions.tyreTemp or M.runningTemp(tyre, conditions)
   km = km or conditions.tyreKm
   local m = 1
-  if tyre.pressureIdeal and tyre.pressureDGain > 0 then
+  ideal = ideal or tyre.pressureIdeal
+  if ideal and tyre.pressureDGain > 0 then
     local hot = hotPsi or M.hotPressure(coldPsi, conditions.airTemp, temp)
-    m = m * max(0.5, 1 - tyre.pressureDGain * abs(hot - tyre.pressureIdeal))
+    m = m * max(0.5, 1 - tyre.pressureDGain * abs(hot - ideal))
   end
   if tyre.perf then m = m * Util.lutEval(tyre.perf, temp) end
   if tyre.wear then
@@ -760,29 +781,38 @@ local function mu(tyre, d, F)
   return d * (F / tyre.fz0) ^ ((tyre.lsExpY or 1) - 1)
 end
 
--- Facteur de carrossage (formule Kunos), γ en radians.
-local function camberFactor(tyre, gammaRad)
-  local a = abs(gammaRad)
-  if tyre.camberPeak and a > tyre.camberPeak then a = tyre.camberPeak end
-  return max(0.5, 1 - (a * tyre.dcamber0 + a * a * tyre.dcamber1))
+-- Facteur de carrossage (1.5.11, décision de Vincent du 12/11/2026 : « tout corriger, carrossage compris ») : c, le
+-- carrossage « utile » en radians (haut de roue penché vers l'intérieur du virage : positif ; vers l'extérieur :
+-- négatif). D = D / (1 − (c·DCAMBER_0 + c²·DCAMBER_1)) : gain jusqu'au sommet c = DCAMBER_0 / (−2·DCAMBER_1), puis
+-- perte ; carrossage contraire : perte. Avant la 1.5.11, la formule était prise en valeur absolue et en perte (le
+-- carrossage négatif ne rapportait jamais d'adhérence, l'optimiseur le réduisait). Borné (données non fiables, D11).
+local function camberFactor(tyre, c)
+  local x = c * tyre.dcamber0 + c * c * tyre.dcamber1
+  local denom = 1 - x
+  if denom <= 1 / K.camberFactorMax then return K.camberFactorMax end
+  return Util.clamp(1 / denom, K.camberFactorMin, K.camberFactorMax)
 end
+M.camberFactor = camberFactor
 
 -- Force latérale maximale d'un essieu : charges Fo (extérieur) et Fi (intérieur). Carrossage de chaque
 -- roue (convention AC : négatif = haut de roue vers la caisse) : statique γ, plus le roulis de caisse
 -- non compensé et la déformation du pneu, qui ouvrent la roue extérieure (vers le positif) et
--- ferment la roue intérieure (vers le négatif).
+-- ferment la roue intérieure (vers le négatif). Carrossage utile : roue extérieure −(γ + δ) (un carrossage négatif la
+-- penche vers l'intérieur du virage) ; roue intérieure γ − δ (penchée vers l'extérieur du virage).
 local function axleLateral(tyre, d, Fo, Fi, gamma, roll)
   local delta = roll + tyre.deformCamber
   local f = 0
-  if Fo > 0 then f = f + mu(tyre, d, Fo) * camberFactor(tyre, gamma + delta) * Fo end
+  if Fo > 0 then f = f + mu(tyre, d, Fo) * camberFactor(tyre, -(gamma + delta)) * Fo end
   if Fi > 0 then f = f + mu(tyre, d, Fi) * camberFactor(tyre, gamma - delta) * Fi end
   return f
 end
 
--- Force longitudinale maximale d'un essieu en ligne droite (deux roues de charge F/2).
+-- Force longitudinale maximale d'un essieu en ligne droite (deux roues de charge F/2) : sans virage, le carrossage
+-- n'a pas de côté utile, moyenne des deux sens (le carrossage coûte un peu d'adhérence au freinage et en traction).
 local function axleLongitudinal(tyre, d, F, gammaS)
   if F <= 0 then return 0 end
-  return 2 * mu(tyre, d, F / 2) * camberFactor(tyre, gammaS) * F / 2
+  local a = abs(gammaS)
+  return 2 * mu(tyre, d, F / 2) * 0.5 * (camberFactor(tyre, a) + camberFactor(tyre, -a)) * F / 2
 end
 
 -- Couple moteur à pleine charge (N·m) avec turbo(s) : T·(1 + pression).
@@ -944,7 +974,7 @@ local function aeroAt(eff, v, drsOpen)
   local hF, hR = eff.rideF, eff.rideR
   local lift, liftFront, drag = 0, 0, 0
   local kmh = v * 3.6
-  for _ = 1, K.aeroIterations do
+  for iter = 1, K.aeroIterations do
     lift, liftFront, drag = 0, 0, 0
     local rake = math.deg(math.atan((hR - hF) / eff.wheelbase))
     for _, w in ipairs(eff.wings) do
@@ -965,9 +995,15 @@ local function aeroAt(eff, v, drsOpen)
       liftFront = liftFront + l * Util.clamp(share, -0.5, 1.5)
       drag = drag + q * cd * w.area * eff.factors.drag
     end
-    -- écrasement : charge aérodynamique par essieu, suspension jusqu'aux butées puis butées, pneus (H16)
-    hF = eff.rideF - axleDrop(max(0, liftFront), eff.suspF)
-    hR = eff.rideR - axleDrop(max(0, lift - liftFront), eff.suspR)
+    -- écrasement : charge aérodynamique par essieu, suspension jusqu'aux butées puis butées, pneus (H16) ; moyenne avec
+    -- l'itération d'avant (1.5.11) : sur une voiture à effet de sol raide et suspension souple, la suite oscillait d'un
+    -- cran de réglage à l'autre ; arrêt dès que la hauteur ne bouge plus
+    local nF = eff.rideF - axleDrop(max(0, liftFront), eff.suspF)
+    local nR = eff.rideR - axleDrop(max(0, lift - liftFront), eff.suspR)
+    if iter > 1 then nF, nR = 0.5 * (hF + nF), 0.5 * (hR + nR) end
+    local moved = max(abs(nF - hF), abs(nR - hR))
+    hF, hR = nF, nR
+    if moved < K.aeroTolerance then break end
   end
   return lift, liftFront, drag, hF, hR
 end
@@ -1061,8 +1097,10 @@ M.lateralMargin, M.solveLateral = lateralMargin, solveLateral
 -- charge, vitesse précédente ou volet fermé), point de départ de la résolution.
 local function lateralLimit(eff, n, lift, liftFront, guess)
   local m = eff.mass
-  local FzF = m * G * n * eff.b / eff.wheelbase + max(0, liftFront)
-  local FzR = m * G * n * eff.a / eff.wheelbase + max(0, lift - liftFront)
+  -- 1.5.11 : une portance (carrosserie qui soulève un essieu) retire de la charge ; seule la charge totale est bornée à
+  -- zéro (avant : toute charge aérodynamique négative était ignorée, une voiture de route paraissait trop adhérente)
+  local FzF = max(0, m * G * n * eff.b / eff.wheelbase + liftFront)
+  local FzR = max(0, m * G * n * eff.a / eff.wheelbase + lift - liftFront)
   -- équilibre (§8.3) à la limite : E = marge avant / marge arrière ; E > 1, l'arrière sature d'abord
   -- (survirage) ; E < 1, sous-virage.
   local ay = solveLateral(eff, FzF, FzR, guess)
@@ -1077,16 +1115,26 @@ end
 -- Décélération maximale de freinage (m/s²) avec transfert de charge et répartition imposée.
 -- rearFirst : l'essieu arrière atteint sa limite d'adhérence avant l'avant (instabilité, §8.4) ;
 -- non compté quand le couple de freinage limite seul.
+-- 1.5.11 : la répartition (FRONT_BIAS) est une part de couple ; ramenée au sol par le rayon de chaque essieu, c'est
+-- eff.brakeForceShare, la part de force (avant : la part de couple servait de part de force). ABS actif : chaque essieu
+-- est tenu à sa limite d'adhérence par l'ABS, la décélération est la somme des deux essieux, chacun borné par son couple
+-- (avant : le premier essieu saturé limitait tout, et reculer la répartition « gagnait » du freinage fictif).
 local function brakeLimit(eff, FzF, FzR)
-  local m, h, bias = eff.mass, eff.cgHeight, eff.brakeBias
+  local m, h, share = eff.mass, eff.cgHeight, eff.brakeForceShare or eff.brakeBias
   local decel, rearFirst = 0, false
+  local maxF, maxR = eff.brakeForceMax * share, eff.brakeForceMax * (1 - share)
   for _ = 1, K.longitudinalIterations do
     local shift = m * decel * h / eff.wheelbase
     local capF = axleLongitudinal(eff.tyreF, eff.dF * eff.longGripF, FzF + shift, eff.camberRadF)
     local capR = axleLongitudinal(eff.tyreR, eff.dR * eff.longGripR, max(0, FzR - shift), eff.camberRadR)
-    local byFront, byRear = capF / bias, capR / max(1e-6, 1 - bias)
-    rearFirst = byRear < byFront and byRear < eff.brakeForceMax
-    decel = min(byFront, byRear, eff.brakeForceMax) / m
+    if eff.absActive then
+      rearFirst = false
+      decel = (min(capF, maxF) + min(capR, maxR)) / m
+    else
+      local byFront, byRear = capF / max(1e-6, share), capR / max(1e-6, 1 - share)
+      rearFirst = byRear < byFront and byRear < eff.brakeForceMax
+      decel = min(byFront, byRear, eff.brakeForceMax) / m
+    end
   end
   return decel, rearFirst
 end
@@ -1126,25 +1174,26 @@ end
 -- force motrice égale traînée + roulement). Croisement cherché par dichotomie sur la table continue du rapport (force et
 -- traînée interpolées dans le même intervalle) : jamais d'interpolation à travers la coupure du limiteur (relecture du
 -- 09/11/2026 : la pointe tombait jusqu'à un pas de table sous la vitesse au limiteur).
-local function netForce(f, drag, rr0, rr1, dv, i)
-  return f[i] - drag[i] - (rr0 + rr1 * ((i - 1) * dv) ^ 2)
+local function netForce(f, drag, roll, i)
+  return f[i] - drag[i] - roll[i]
 end
 
-local function topSpeedOf(eff, drag, rr0, rr1)
+-- roll : résistance au roulement par vitesse (table, N), qui suit la charge des pneus.
+local function topSpeedOf(eff, drag, roll)
   local dv, count = eff.dv, eff.speedCount
   local vEnd = (count - 1) * dv
   local top = 0
   for g = 1, eff.gearCount do
     local f, vmax = eff.gearForce[g], min(eff.gearVmax[g], vEnd)
-    local reach = netForce(f, drag, rr0, rr1, dv, 1) > 0 and vmax or 0
+    local reach = netForce(f, drag, roll, 1) > 0 and vmax or 0
     for i = 2, reach > 0 and count or 1 do
       if (i - 2) * dv >= vmax then break end
-      if netForce(f, drag, rr0, rr1, dv, i) <= 0 then
+      if netForce(f, drag, roll, i) <= 0 then
         local lo, hi = (i - 2) * dv, (i - 1) * dv
         for _ = 1, 30 do
           local v = 0.5 * (lo + hi)
           local t = (v - (i - 2) * dv) / dv
-          local resist = drag[i - 1] + (drag[i] - drag[i - 1]) * t + rr0 + rr1 * v * v
+          local resist = drag[i - 1] + (drag[i] - drag[i - 1]) * t + roll[i - 1] + (roll[i] - roll[i - 1]) * t
           if f[i - 1] + (f[i] - f[i - 1]) * t > resist then lo = v else hi = v end
         end
         reach = min(vmax, lo)
@@ -1198,8 +1247,7 @@ function M.configure(base, setup, conditions, tick, reuse)
   eff.turbos, eff.gears, eff.gearCount, eff.final = base.turbos, setup.gears, #setup.gears, setup.final
   eff.shiftUpTime = base.shiftUpTime
   eff.brakeBias = Util.clamp(setup.brakeBias, K.brakeBiasMin, K.brakeBiasMax)
-  eff.diffPower, eff.diffCoast = Util.clamp(setup.diffPower, 0, 1), Util.clamp(setup.diffCoast, 0, 1)
-  eff.diffPreload = max(0, setup.diffPreload or 0)
+  eff.diffPower = Util.clamp(setup.diffPower, 0, 1)
   -- H20 : moment de lacet du différentiel bloqué, ramené à la marge latérale de l'avant : force motrice
   -- admissible = (1 − ay/capacité)·m·capacité·diffYawK, avec diffYawK = 2·b / (blocage·voie motrice)
   -- (b : bras de levier de l'avant, centre de gravité – essieu arrière)
@@ -1223,18 +1271,21 @@ function M.configure(base, setup, conditions, tick, reuse)
   eff.wetness, eff.waterMm = wetness, wetness > 0 and M.waterDepth(conditions) or 0
   eff.wetF, eff.wetR = M.wetSurfaceFactor(compound.front, wetness), M.wetSurfaceFactor(compound.rear, wetness)
   eff.dF = compound.front.dyRef * grip * eff.wetF * gripMultiplier(compound.front, setup.pressureF, conditions, hotF,
-    conditions.tyreTempF, conditions.tyreKmF)
+    conditions.tyreTempF, conditions.tyreKmF, conditions.compareIdealF)
   eff.dR = compound.rear.dyRef * grip * eff.wetR * gripMultiplier(compound.rear, setup.pressureR, conditions, hotR,
-    conditions.tyreTempR, conditions.tyreKmR)
+    conditions.tyreTempR, conditions.tyreKmR, conditions.compareIdealR)
   local rateF, rateR = tyreRateAt(compound.front, hotF), tyreRateAt(compound.rear, hotR)
   -- En longitudinal (freinage, motricité), le pneu suit DX_REF au lieu de DY_REF.
   eff.longGripF = (compound.front.dxRef or compound.front.dyRef) / compound.front.dyRef
   eff.longGripR = (compound.rear.dxRef or compound.rear.dyRef) / compound.rear.dyRef
   -- Hypothèse H3 : AC applique MAX_TORQUE × part de l'essieu à chacune de ses deux roues, d'où un
   -- couple total de 2 × MAX_TORQUE, ramené au sol par le rayon de chaque essieu.
+  local forceF, forceR = eff.brakeBias / compound.front.radius, (1 - eff.brakeBias) / compound.rear.radius
+  eff.brakeForceShare = forceF / max(1e-9, forceF + forceR)
+  eff.absActive = conditions.absActive == true
   if base.brakeTorque then
     local torque = 2 * base.brakeTorque * (setup.brakePower or 1) * factors.brake
-    eff.brakeForceMax = torque * (eff.brakeBias / compound.front.radius + (1 - eff.brakeBias) / compound.rear.radius)
+    eff.brakeForceMax = torque * (forceF + forceR)
   else
     eff.brakeForceMax = math.huge
   end
@@ -1266,6 +1317,7 @@ function M.configure(base, setup, conditions, tick, reuse)
   -- ressorts et pression à froid. refAt : hauteur du setup de référence avec la masse de ce setup.
   local refAtF, refAtR = base.rideHeightF, base.rideHeightR
   local ref = base.rideRef
+  eff.staticTravelF, eff.staticTravelR = base.staticTravelF, base.staticTravelR
   if ref and Util.isFinite(base.rideRefFuel) and Util.isFinite(base.massDry) then
     local massRef = base.massDry + (base.ballast or 0) + max(0, base.rideRefFuel) * K.fuelDensity
     local shareF, shareR = eff.b / eff.wheelbase, eff.a / eff.wheelbase
@@ -1279,6 +1331,24 @@ function M.configure(base, setup, conditions, tick, reuse)
     eff.rideR = eff.rideR - (staticDrop(loadR, setup.springR, heaveR, compound.rear, setup.pressureR) - dropRefR)
     refAtF = refAtF - (staticDrop(loadF, springRefF, heaveRefF, compound.front, coldRefF) - dropRefF)
     refAtR = refAtR - (staticDrop(loadR, springRefR, heaveRefR, compound.rear, coldRefR) - dropRefR)
+    -- course au repos de ce setup : celle relevée au stand, plus l'écart d'écrasement des ressorts (masse, raideur)
+    if base.staticTravelF then
+      eff.staticTravelF = base.staticTravelF + loadF / max(1, 2 * setup.springF + heaveF)
+        - massRef * G * shareF / max(1, 2 * springRefF + heaveRefF)
+    end
+    if base.staticTravelR then
+      eff.staticTravelR = base.staticTravelR + loadR / max(1, 2 * setup.springR + heaveR)
+        - massRef * G * shareR / max(1, 2 * springRefR + heaveRefR)
+    end
+  end
+  -- course avant butée depuis l'assiette statique (H16, 1.5.11) : PACKER_RANGE se compte depuis la détente, comme la
+  -- course relevée au stand ; la course déjà prise au repos en est retirée (avant : PACKER_RANGE entière depuis
+  -- l'assiette, les butées étaient atteintes bien plus tard que dans AC). Déjà sur les butées au repos : écart minimal.
+  if suspF.gap and suspF.gap > 0 and Util.isFinite(eff.staticTravelF) then
+    suspF.gap = max(K.packerGapMin, suspF.gap - max(0, eff.staticTravelF))
+  end
+  if suspR.gap and suspR.gap > 0 and Util.isFinite(eff.staticTravelR) then
+    suspR.gap = max(K.packerGapMin, suspR.gap - max(0, eff.staticTravelR))
   end
   -- DRS (§8.9) : tables volet ouvert seulement si demandé (qualification, tours en trafic) et utilisable
   local drs = base.drs
@@ -1303,6 +1373,20 @@ function M.configure(base, setup, conditions, tick, reuse)
   local gearVmax = array(eff, 'gearVmax')
   for g = 1, eff.gearCount do
     gearVmax[g] = eff.limiter * 2 * math.pi / 60 * eff.wheelRadius / (eff.gears[g] * eff.final)
+  end
+  -- Masse équivalente des pièces en rotation par rapport (1.5.11, décision de Vincent du 12/11/2026) : AC applique la
+  -- courbe de couple aux roues sans perte ; ce qui ralentit l'accélération, surtout en bas rapports, c'est l'inertie des
+  -- roues, du moteur et de la boîte (avant : un rendement fixe de 0,9 sur tous les rapports). Inertie absente du
+  -- fichier : K.defaultEngineInertia, K.defaultGearboxInertia (celle d'AC), K.defaultWheelInertia.
+  local inertiaMass = array(eff, 'inertiaMass')
+  local rF, rR = compound.front.radius, compound.rear.radius
+  local iwF = compound.front.angularInertia or K.defaultWheelInertia
+  local iwR = compound.rear.angularInertia or K.defaultWheelInertia
+  local wheels = 2 * iwF / (rF * rF) + 2 * iwR / (rR * rR)
+  local engine = (base.engineInertia or K.defaultEngineInertia) + (base.gearboxInertia or K.defaultGearboxInertia)
+  for g = 1, eff.gearCount do
+    local ratio = eff.gears[g] * eff.final
+    inertiaMass[g] = Util.clamp(wheels + engine * ratio * ratio / (eff.wheelRadius * eff.wheelRadius), 0, eff.mass)
   end
   -- Tables en fonction de la vitesse (pas K.speedStep) et du facteur de charge normale.
   local dv = K.speedStep
@@ -1329,8 +1413,12 @@ function M.configure(base, setup, conditions, tick, reuse)
   local frontCap = ersOn and grid(eff, 'ersFrontCap', #loads) or nil
   local dF0, dR0 = eff.dF, eff.dR
   local bumpGripF, bumpGripR = array(eff, 'bumpGripF'), array(eff, 'bumpGripR')
-  local rr0 = 2 * (compound.front.rr0 + compound.rear.rr0)
-  local rr1 = 2 * (compound.front.rr1 + compound.rear.rr1)
+  -- résistance au roulement (1.5.11) : charge de l'essieu × (ROLLING_RESISTANCE_0 + ROLLING_RESISTANCE_1·v²) / 1000,
+  -- soit 1 % de la charge pour ROLLING_RESISTANCE_0 = 10 (coefficient d'un pneu réel) ; appui compris. Avant : les
+  -- coefficients étaient pris pour des forces (40 N pour une GT3 au lieu d'environ 130 N à l'arrêt).
+  local rrF0, rrF1 = compound.front.rr0 * K.rollingLoadScale, compound.front.rr1 * K.rollingLoadScale
+  local rrR0, rrR1 = compound.rear.rr0 * K.rollingLoadScale, compound.rear.rr1 * K.rollingLoadScale
+  local staticF, staticR = eff.mass * G * eff.b / eff.wheelbase, eff.mass * G * eff.a / eff.wheelbase
   local minGear = 1
   -- Première passe, toutes les vitesses : appui, traînée, forces de traction, perte d'adhérence sur la
   -- rugosité ; la vitesse de pointe s'en déduit.
@@ -1358,7 +1446,7 @@ function M.configure(base, setup, conditions, tick, reuse)
       end
       minGear = bestGear
     end
-    rollRes[i] = rr0 + rr1 * v * v
+    rollRes[i] = max(0, staticF + lf) * (rrF0 + rrF1 * v * v) + max(0, staticR + l - lf) * (rrR0 + rrR1 * v * v)
     bumpGripF[i] = bumpGripAt(eff, eff.quarterF, compound.front, suspF, lf, v)
     bumpGripR[i] = bumpGripAt(eff, eff.quarterR, compound.rear, suspR, l - lf, v)
     -- aquaplanage (H26) : adhérence de chaque essieu selon la vitesse et l'eau au-delà des rainures
@@ -1367,7 +1455,7 @@ function M.configure(base, setup, conditions, tick, reuse)
       bumpGripR[i] = bumpGripR[i] * M.aquaplaneFactor(compound.rear, eff.waterMm, v)
     end
   end
-  eff.topSpeed = topSpeedOf(eff, drag, rr0, rr1)
+  eff.topSpeed = topSpeedOf(eff, drag, rollRes)
   -- DRS ouvert : traînée et appui volet ouvert, vitesse de pointe volet ouvert
   local liftOpen, liftFrontOpen = nil, nil
   if eff.drsOn then
@@ -1377,12 +1465,20 @@ function M.configure(base, setup, conditions, tick, reuse)
       if i % 4 == 0 then tick() end
       liftOpen[i], liftFrontOpen[i], dragOpen[i] = aeroAt(eff, (i - 1) * dv, true)
     end
-    eff.topSpeedOpen = topSpeedOf(eff, dragOpen, rr0, rr1)
+    eff.topSpeedOpen = topSpeedOf(eff, dragOpen, rollRes)
   end
   -- Seconde passe, jusqu'à la vitesse la plus haute que la simulation peut atteindre (vitesse de pointe,
   -- volet ouvert compris : la vitesse limite du tour ne la dépasse jamais) : adhérence latérale,
   -- freinage, motricité. Au-delà, ligne recopiée (jamais lue).
-  local reach = min(count, floor(max(eff.topSpeed, eff.topSpeedOpen or 0) / dv) + 2)
+  -- ERS (1.5.11) : le déploiement pousse au-delà de la pointe du moteur thermique seul ; la vitesse ne bute alors que
+  -- sur le limiteur du rapport le plus long (la passe avant s'arrête d'elle-même quand la force ne vainc plus la traînée)
+  eff.ersTop = nil
+  if ersOn then
+    local top = 0
+    for g = 1, eff.gearCount do top = max(top, gearVmax[g]) end
+    eff.ersTop = min((count - 1) * dv, max(eff.topSpeed, top))
+  end
+  local reach = min(count, floor(max(eff.topSpeed, eff.topSpeedOpen or 0, eff.ersTop or 0) / dv) + 2)
   eff.tableReach = reach
   for i = 1, reach do
     if i % 4 == 0 then tick() end
@@ -1440,8 +1536,8 @@ function M.configure(base, setup, conditions, tick, reuse)
   eff.brakeLockRisk = 0
   if not conditions.absActive and eff.brakeForceMax < math.huge then
     local i = min(count, floor(K.brakeLockSpeed / dv) + 1)
-    local FzF = eff.mass * G * eff.b / eff.wheelbase + max(0, liftFront[i])
-    local FzR = eff.mass * G * eff.a / eff.wheelbase + max(0, lift[i] - liftFront[i])
+    local FzF = max(0, eff.mass * G * eff.b / eff.wheelbase + liftFront[i])
+    local FzR = max(0, eff.mass * G * eff.a / eff.wheelbase + lift[i] - liftFront[i])
     local torqueLimit = eff.brakeForceMax
     eff.brakeForceMax = math.huge
     local gripDecel = brakeLimit(eff, FzF, FzR)

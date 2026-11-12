@@ -431,7 +431,12 @@ tests['AU05 mémoire par séance et état de piste : qualification, essai, pluie
   frames(h, 1)
   h.click = 'Relancer l\'affinage (tour rapide)'
   frames(h, 1)
-  T.ok(waitFor(h, function() return app.refine.version >= 1 and app.refine.phase == 'tours' end), 'v1 pluie')
+  -- (1.5.11) attendre la version pluie elle-même : l'affinage repris garde d'abord ses versions sèches (sur une machine
+  -- chargée, la condition « une version, en roulage » était vraie avant le calcul sous la pluie)
+  T.ok(waitFor(h, function()
+    local last = app.refine.history[#app.refine.history]
+    return app.refine.phase == 'tours' and last ~= nil and last.bucket == 'pluie'
+  end), 'v1 pluie')
   T.eq(app.refine.history[#app.refine.history].bucket, 'pluie')
   h.click = 'Valider v' .. app.refine.version
   frames(h, 1)
@@ -513,7 +518,8 @@ tests['AU07 stockage plein : un setup figé de la mémoire part en dernier'] = f
   local text = Store.purge(store)
   T.ok(#text <= Config.K.storeMaxBytes)
   T.ok(store.entries['mem:car:trk:-:qualif:sec'], 'figé gardé, malgré la date la plus ancienne')
-  T.eq(store.entries['mem:car:trk:-:essai:sec'], nil, 'validé non figé : purgé comme les autres')
+  -- 1.5.11 (décision de Vincent du 12/11/2026) : les derniers setups partent avant la mémoire du circuit
+  T.ok(store.entries['mem:car:trk:-:essai:sec'], "validé non figé : gardé, les derniers setups partent d'abord")
 end
 
 -- Constat de Vincent du 21/10/2026 (DTM à Spa, SetupLab actif, en roulant) : 29 fichiers écrits en un

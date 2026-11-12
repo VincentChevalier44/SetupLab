@@ -497,9 +497,16 @@ function M.estimate(lap, info, tick)
       nLoad = math.cos(track.theta[k]) * math.cos(phi) + v * v * (abs(kap) * math.sin(phi) + track.kappaV[k]) / G
     end
     if v > K.estimateMinSpeed and lap.gas[i] > 0.98 and lap.brake[i] < 0.02 and ay < K.estimateStraightAy then
-      x1[#x1 + 1], x2[#x2 + 1], y[#y + 1] = 1, -0.5 * rho * v * v * v, m * (ax + G * grade) * v
+      -- pièces en rotation (1.5.11, comme le modèle) : roues et moteur, inerties par défaut, régime relevé du tour
+      local omega = (lap.rpm and lap.rpm[i] or 0) * 2 * math.pi / 60 / v
+      local mEff = m + 4 * K.defaultWheelInertia / (K.estimateWheelRadius * K.estimateWheelRadius)
+        + (K.defaultEngineInertia + K.defaultGearboxInertia) * omega * omega
+      x1[#x1 + 1], x2[#x2 + 1], y[#y + 1] = 1, -0.5 * rho * v * v * v, mEff * (ax + G * grade) * v
     end
-    if v > K.estimateMinSpeed and lap.brake[i] < 0.1 and ay > K.estimateCornerFraction * ayMax and nLoad > 0.3 then
+    -- virage stabilisé seulement (1.5.11) : en sortie, l'adhérence part aussi en accélération (ellipse), le g latéral y est
+    -- sous la limite et faussait l'appui estimé
+    if v > K.estimateMinSpeed and lap.brake[i] < 0.1 and ay > K.estimateCornerFraction * ayMax and nLoad > 0.3
+        and abs(ax) < K.estimateCornerMaxAx then
       l1[#l1 + 1], l2[#l2 + 1], ly[#ly + 1] = nLoad * G, v * v, ay
     end
     if lap.brake[i] > 0.5 and ax < 0 then decel[#decel + 1] = -ax end

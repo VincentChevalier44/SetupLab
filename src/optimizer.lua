@@ -385,9 +385,19 @@ local function chooseCompound(p, evaluateZero, lock)
   local savedF, savedR = p.conditions.tyreTempF, p.conditions.tyreTempR
   local atMeasured = tF ~= nil and tR ~= nil
   if atMeasured then p.conditions.tyreTempF, p.conditions.tyreTempR = tF, tR end
+  -- 1.5.11 : un composé dont la pression idéale diffère de celle du composé monté est jugé comme si sa pression était
+  -- réglée ensuite (écart à sa pression idéale égal à celui du composé monté) ; avant, il perdait PRESSURE_D_GAIN par psi
+  -- d'écart et le composé monté paraissait meilleur. Référence posée dans les conditions du calcul (jamais dans les pneus :
+  -- un calcul annulé n'y laisse rien)
+  local cur = base.compounds[p.currentSlot]
   for _, slot in ipairs(candidates) do
     p.setup.compound = slot
+    if slot ~= p.currentSlot and cur then
+      p.conditions.compareIdealF = cur.front and cur.front.pressureIdeal or nil
+      p.conditions.compareIdealR = cur.rear and cur.rear.pressureIdeal or nil
+    end
     local J = evaluateZero(slot)
+    p.conditions.compareIdealF, p.conditions.compareIdealR = nil, nil
     local c = base.compounds[slot]
     -- sur piste mouillée, aucun composé n'est écarté pour son usage (wet : écarté d'office sur le sec)
     local entry = { slot = slot, index = c.index, name = c.name, short = c.short, J = J, use = c.use,
@@ -475,6 +485,8 @@ end
 -- voiture et circuit, §8.9), budget, seed? }. En qualification, le DRS sert dans toutes les zones.
 function M.prepareQuali(args)
   local p = { args = args, vars = Space.optimizable(args.space), deltas = {}, setup = CarModel.defaultSetup(args.base) }
+  -- carburant non réglable dans le setup (1.5.11) : celui qui est à bord, pas celui de car.ini (masse du tour et relais)
+  if args.space.byKey.fuel == nil and Util.isFinite(args.fuelNow) and args.fuelNow >= 0 then p.setup.fuel = args.fuelNow end
   p.currentSlot = args.compound or p.setup.compound
   p.setup.compound = p.currentSlot
   p.dims = {}
@@ -1112,9 +1124,11 @@ function M.runRace(p, ctx, state)
   p.compound = chooseCompound(p, function(slot)
     -- l'évaluateur garde sa copie des conditions : la température mesurée posée par chooseCompound y est recopiée
     ev.conditions.tyreTempF, ev.conditions.tyreTempR = p.conditions.tyreTempF, p.conditions.tyreTempR
+    ev.conditions.compareIdealF, ev.conditions.compareIdealR = p.conditions.compareIdealF, p.conditions.compareIdealR
     return (exactJ(zero, slot, p.factors))
   end, lock)
   ev.conditions.tyreTempF, ev.conditions.tyreTempR = p.conditions.tyreTempF, p.conditions.tyreTempR
+  ev.conditions.compareIdealF, ev.conditions.compareIdealR = nil, nil
   M.tyreBounds(p)
   local common = p.compound.common
   for _, e in ipairs({ ev, evCoarse }) do
@@ -1173,9 +1187,12 @@ function M.runRace(p, ctx, state)
       .. ') : setup actuel conservé, carburant de course seulement'
     chosen = zero
     local c = args.base.compounds[refSlot]
-    p.compound = { slot = refSlot, index = c.index, name = c.name, short = c.short, changed = refSlot ~= p.currentSlot,
-      imposed = p.compound.imposed, comparison = p.compound.comparison, note = fallback,
-      calibrationNote = p.compound.calibrationNote, calibrated = p.compound.calibrated, common = common }
+    -- repli : composé de référence ; la comparaison des composés (note, températures mesurées) reste dite (1.5.11)
+    local kept = {}
+    for key, value in pairs(p.compound) do kept[key] = value end
+    kept.slot, kept.index, kept.name, kept.short, kept.changed = refSlot, c.index, c.name, c.short, refSlot ~= p.currentSlot
+    kept.note, kept.common = fallback .. (p.compound.note and (' ; ' .. p.compound.note) or ''), common
+    p.compound = kept
     Jp, stintProposed, detail = exactJ(zero, refSlot, common)
   end
   -- profils et équilibre par virage (§12.1) sur le dernier tour échantillonné du relais, setup actuel
