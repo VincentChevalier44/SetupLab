@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.0-beta.1.5.12 — 2026-11-12 — beta 1.5.12: works with AdvancedIA and SpotterEnginer
+
+Why this update: SetupLab now works hand in hand with two companion apps by the same author, AdvancedIA (AI race director) and SpotterEnginer (spotter and race engineer). SetupLab stays fully independent: without them, nothing changes and nothing new is shown. From 1.5.4, click **Update** in the SetupLab window.
+
+With AdvancedIA installed and running (checked on the offline bench; not yet tried in game):
+
+- Laps driven under safety car, VSC, FCY, red flag, formation lap, yellow flag, a delta to respect or a penalty (slow-down, drive-through, black flag) count in AC's times only: they are left out of the calibration, race pace, fuel consumption and tyre wear. AdvancedIA judges each lap; SetupLab waits up to 1.5 s after the line for its verdict.
+- Race rules: mandatory stops and a maximum stint length cap the stint (and so the starting fuel); DRS disabled by the rules is not counted in the computations; with a mandatory tyre change, the pit stop preset gets the best allowed compound other than the fitted one.
+- Cars stopped or off the track (according to AdvancedIA) no longer count as traffic.
+- When AdvancedIA costs more than 1.5 ms per frame, SetupLab's computing slice shrinks by the difference.
+- When AdvancedIA sees the same track state, the dry/wet switch happens at once instead of after the usual delay.
+- A setting "Use AdvancedIA's data" appears in the SETTINGS tab only when AdvancedIA is installed. A "Rules" line appears in the stint panel only when a rule applies.
+- SetupLab only reads AdvancedIA's shared data (shared structure and session key); it never writes into it. With the free CSP 0.2.11 (no shared structures), SetupLab works as before.
+
+For SpotterEnginer: SetupLab publishes a short read-only key (setup in the car, planned fuel and consumption, target hot pressures, refinement state, trial-lap verdicts), so the race engineer can announce a new version ready, whether a trial is better or worse, and start from SetupLab's fuel figure. Rewritten only when a value changes, never in replays or online pauses.
+
+Offline test bench: 477 tests (11 new).
+
 ## 1.0.0-beta.1.5.11 — 2026-11-12 — beta 1.5.11: physics model corrected, CSP 0.2.11 car data, smoother computing
 
 Why this update: a third complete review of the code. Several parts of the physics model did not follow Assetto Corsa closely enough (camber, ABS braking, drivetrain, rolling resistance, hybrids); with the free CSP 0.2.11 the car data could still not be read ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)); and a few smaller defects were found in the interface, the saved data and the lap recorder. From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).
