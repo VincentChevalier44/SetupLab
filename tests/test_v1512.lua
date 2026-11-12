@@ -278,18 +278,19 @@ end
 tests['CP08 SetupLab.state : contrat v1, 240 octets, réécrit seulement si une valeur change'] = function()
   local text = Companion.stateText({ kind = 'race', ver = 'e3', fuel = 104.26, fpl = 2.853, stint = 35, compound = 'M',
     hotF = 27.46, hotR = 27.9, tune = 'running', readyN = 3, stamp = 1234.6, pitc = 'H', stops = 1, tlap = 2, tdl = -0.317,
-    tv = 'better', tch = 'aero', tid = 5 })
+    tv = 'better', tch = 'aero', tid = 5, sess = 2 })
   T.eq(text, 'v=1;kind=race;ver=e3;fuel=104.3;fpl=2.85;stint=35;compound=M;phot=27.5,27.5,27.9,27.9;tune=running;readyN=3;'
-    .. 'stamp=1235;pitc=H;stops=1;tlap=2;tdl=-0.32;tv=better;tch=aero;tid=5')
+    .. 'stamp=1235;pitc=H;stops=1;tlap=2;tdl=-0.32;tv=better;tch=aero;tid=5;sess=2')
   T.ok(#text <= K.companionStateMax)
   local empty = Companion.stateText({ kind = 'none', stamp = 10 })
   T.eq(empty, 'v=1;kind=none;ver=-;fuel=-1;fpl=-1;stint=-1;compound=-;phot=-1;tune=idle;readyN=0;stamp=10;pitc=-;stops=-1;'
-    .. 'tlap=-1;tdl=-;tv=-;tch=-;tid=0')
+    .. 'tlap=-1;tdl=-;tv=-;tch=-;tid=0;sess=-1')
   T.eq(Companion.stateText({ compound = 'a;b=c' }):match('compound=([^;]*)'), 'a_b_c', 'séparateurs retirés des noms')
   -- longueur maximale : noms longs coupés, total borné
   local long = Companion.stateText({ kind = 'quali', ver = string.rep('9', 30), compound = string.rep('X', 30),
     pitc = string.rep('Y', 30), fuel = 999.9, fpl = 99.99, stint = 999, hotF = 99.9, hotR = 99.9, readyN = 99999,
-    stamp = 9999999, stops = 99, tlap = 999, tdl = -99.99, tv = 'better', tch = 'alignment', tid = 99999, tune = 'running' })
+    stamp = 9999999, stops = 99, tlap = 999, tdl = -99.99, tv = 'better', tch = 'alignment', tid = 99999, tune = 'running',
+    sess = 99 })
   T.ok(#long <= K.companionStateMax, 'au plus 240 octets : ' .. #long)
   -- publication : le stamp seul ne réécrit pas
   local c, writes = Companion.new(), {}
@@ -353,6 +354,43 @@ tests['CP10 mode inerte (replay) : SetupLab.state jamais écrit'] = function()
   app.lastLoadKind = 'race'
   frames(h, 120, aia)
   T.eq(#h.stores, n, 'aucune écriture en mode inerte')
+end
+
+tests['CP11 liaison connectée : aucune table créée par image (lecture du pont, voitures du trafic)'] = function()
+  local c = Companion.new()
+  c.installed, c.opened = true, true
+  c.hello = { bridgeVersion = 1, heartbeat = 1, closed = false }
+  local cars = {}
+  for i = 0, 3 do cars[i] = { valid = true, halt = i == 2, onTrack = true } end
+  c.data = { enabled = true, ready = true, wet = false, mandatoryStops = 1, maxStintMin = 0, cars = cars }
+  local host = { ac = { load = function() return 'v=1;lastLapId=3;lastLapClean=1' end } }
+  Companion.step(c, host, 0)
+  T.eq(c.state, 'connected')
+  local frame = 0
+  local function run(n)
+    for _ = 1, n do
+      frame = frame + 1
+      c.hello.heartbeat = frame + 1
+      -- clé relue toutes les 0,5 s : texte inchangé, rien de relu
+      Companion.step(c, host, frame / 60)
+      for i = 1, 3 do Companion.carIdle(c, i) end
+    end
+  end
+  -- traces de LuaJIT : objets du ramasse-miettes créés à leur compilation (une fois, selon l'ordre des tests) ; mesure
+  -- des tables et chaînes du code seulement, compilateur arrêté
+  local jit = rawget(_G, 'jit')
+  if jit then jit.off() end
+  run(600)
+  collectgarbage('collect')
+  collectgarbage('stop')
+  local before = collectgarbage('count')
+  run(6000)
+  local kb = collectgarbage('count') - before
+  collectgarbage('restart')
+  if jit then jit.on() end
+  T.ok(kb < 1, string.format('%.2f Ko alloués en 6000 images', kb))
+  T.ok(Companion.carIdle(c, 2), 'voiture arrêtée')
+  T.no(Companion.carIdle(c, 1))
 end
 
 return tests

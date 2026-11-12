@@ -1651,7 +1651,8 @@ end
 -- Valeurs de SetupLab.state (contrat v1 avec SpotterEnginer) : setup en place reconnu par SetupLab, plan de course,
 -- pressions à chaud visées, état de l'affinage, verdict des tours d'essai.
 function app.companionState()
-  local s = { kind = 'none', stamp = app.now, tv = '-', tch = '-' }
+  local s = { kind = 'none', stamp = app.now, tv = '-', tch = '-', tid = app.companionTrial.tid,
+    sess = app.context and app.context.sessionIndex }
   local r = app.refine
   local kind = (r and r.active and r.kind) or app.lastLoadKind
   if kind ~= 'quali' and kind ~= 'race' then return s end

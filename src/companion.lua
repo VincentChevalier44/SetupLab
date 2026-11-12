@@ -93,8 +93,10 @@ function M.open(c, host)
   return false
 end
 
+-- Champ d'une structure partagée (accès protégé, sans fermeture créée : appelé à chaque image).
+local function index(t, key) return t[key] end
 local function field(t, key)
-  local ok, v = pcall(function() return t[key] end)
+  local ok, v = pcall(index, t, key)
   if ok then return v end
   return nil
 end
@@ -140,16 +142,14 @@ function M.parseSession(text)
   return out
 end
 
--- Instantané des champs utiles du pont (copie : rien n'est gardé de la structure partagée entre deux images).
-local function snapshot(d)
-  return {
-    enabled = field(d, 'enabled') == true, ready = field(d, 'ready') == true, online = field(d, 'online') == true,
-    replay = field(d, 'replay') == true, paused = field(d, 'paused') == true, panic = field(d, 'panic') == true,
-    guard = field(d, 'guard'), wet = field(d, 'wet') == true, neutral = field(d, 'neutral') == true,
-    red = field(d, 'red') == true, sessionType = field(d, 'sessionType'), raceKnown = field(d, 'raceKnown') == true,
-    raceLapsLeft = field(d, 'raceLapsLeft'), mandatoryStops = field(d, 'mandatoryStops'),
-    maxStintMin = field(d, 'maxStintMin'), minPitTime = field(d, 'minPitTime'),
-  }
+-- Instantané des champs utiles du pont, recopiés dans la même table à chaque image (rien n'est gardé de la structure
+-- partagée ; aucune table créée par image).
+local SNAPSHOT_BOOL = { 'enabled', 'ready', 'online', 'replay', 'paused', 'panic', 'wet', 'neutral', 'red', 'raceKnown' }
+local SNAPSHOT_RAW = { 'guard', 'sessionType', 'raceLapsLeft', 'mandatoryStops', 'maxStintMin', 'minPitTime' }
+local function snapshot(d, s)
+  for i = 1, #SNAPSHOT_BOOL do s[SNAPSHOT_BOOL[i]] = field(d, SNAPSHOT_BOOL[i]) == true end
+  for i = 1, #SNAPSHOT_RAW do s[SNAPSHOT_RAW[i]] = field(d, SNAPSHOT_RAW[i]) end
+  return s
 end
 
 -- Une image : état de la liaison (battement en temps réel : l'horloge d'AdvancedIA s'arrête en pause), clé de séance
@@ -173,7 +173,8 @@ function M.step(c, host, wall)
     elseif (tonumber(field(hello, 'bridgeVersion')) or 0) ~= Layout.version or c.data == nil then
       state = 'version'
     else
-      local s = snapshot(c.data)
+      c.snap = c.snap or {}
+      local s = snapshot(c.data, c.snap)
       c.live = s
       if not s.enabled then state, reason = 'suspended', 'disabled'
       elseif s.panic then state, reason = 'suspended', 'panic'
@@ -278,7 +279,8 @@ function M.pitCompound(mounted, allowed, comparison, indices)
 end
 
 -- Texte de SetupLab.state (contrat v1 avec SpotterEnginer) : champs dans l'ordre convenu, -1 pour un nombre inconnu,
--- « - » pour un nom inconnu. s : table des valeurs (voir la colle).
+-- « - » pour un nom inconnu. s : table des valeurs (voir la colle). sess (demande de SpotterEnginer du 12/11/2026) :
+-- sim.currentSessionIndex, la clé est donc réécrite à chaque nouvelle séance ; stamp : sim.time / 1000 arrondi.
 local function num(v, digits)
   if not Util.isFinite(v) then return '-1' end
   if digits == 0 then return string.format('%d', floor(v + 0.5)) end
@@ -300,7 +302,7 @@ function M.stateText(s)
     .. num(s.fpl, 2) .. ';stint=' .. num(s.stint, 0) .. ';compound=' .. name(s.compound) .. ';phot=' .. phot .. ';tune='
     .. (s.tune or 'idle') .. ';readyN=' .. num(s.readyN or 0, 0) .. ';stamp=' .. num(s.stamp, 0) .. ';pitc=' .. name(s.pitc)
     .. ';stops=' .. num(s.stops, 0) .. ';tlap=' .. num(s.tlap, 0) .. ';tdl=' .. tdl .. ';tv=' .. (s.tv or '-') .. ';tch='
-    .. (s.tch or '-') .. ';tid=' .. num(s.tid or 0, 0)
+    .. (s.tch or '-') .. ';tid=' .. num(s.tid or 0, 0) .. ';sess=' .. num(s.sess, 0)
   return text:sub(1, K.companionStateMax)
 end
 
