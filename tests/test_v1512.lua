@@ -127,6 +127,20 @@ tests['CP02 clé AdvancedIA.session : lecture tolérante, autre version ignorée
   T.eq(Companion.parseSession('v=2;lastLapId=3'), nil, 'autre version')
   T.eq(Companion.parseSession(nil), nil)
   T.eq(Companion.parseSession(string.rep('x', 2000)), nil)
+  -- format définitif d'AdvancedIA 1.63 (12/11/2026) : ordre, booléens 0/1, règles avec espaces, liste vide, fermeture
+  local real = Companion.parseSession('v=1;session=Q;rules=F1 2026;playerLapId=5;playerLapClean=0;reason=yellow;'
+    .. 'lastLapId=4;lastLapClean=1;drsAllowed=1;compoundChange=0;compoundsAllowed=;wetWaived=0;costMs=1.234;'
+    .. 'aiLapMean=0.000;aiLapCount=0')
+  T.eq(real.session, 'Q')
+  T.eq(real.rules, 'F1 2026')
+  T.eq(real.playerLapClean, false)
+  T.eq(real.lastLapId, 4)
+  T.eq(real.lastLapClean, true)
+  T.eq(real.drsAllowed, true)
+  T.eq(real.compoundsAllowed, nil, 'liste vide : pas de restriction')
+  T.near(real.costMs, 1.234, 1e-9)
+  local closed = Companion.parseSession('v=1;closed=1')
+  T.eq(closed.lastLapClean, nil, 'fermeture : aucun verdict')
   local partial = Companion.parseSession('v=1;lastLapId=abc;compoundsAllowed=-')
   T.eq(partial.lastLapId, nil, 'champ illisible : absent')
   T.eq(partial.compoundsAllowed, nil, 'pas de restriction')
