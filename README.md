@@ -83,6 +83,7 @@ This beta is built and checked on an **offline test bench** (466 tests: models, 
 - the rain model, which relies on assumptions: your wet laps calibrate it;
 - the free CSP 0.2.11: checked against its SDK and on the bench (simulated 0.2.11); a player confirmed that SetupLab starts normally with it since 1.5.6. Since 1.5.9, when this CSP gives empty car files or no setup settings (issue #2), SetupLab reads the car files' raw text and deduces the settings from the car's `setup.ini`; the J0 report then says so, and settings locked by a series are not known in that mode;
 - loading a setup on the grid before a race start (1.5.9), checked on the bench only;
+- the 1.5.11 model changes (camber, braking with ABS, rotating inertia instead of a fixed drivetrain loss, rolling resistance following the tyre load, packer range, hybrids past the combustion top speed), checked on the bench only; the 1.5.11 CSP 0.2.11 car-data fix (issue #2), checked on the bench, which reproduces the report;
 - the 1.5.5 race laps entry during the race refinement, the folding setup settings table and the overlay hidden in replays, checked on the bench only. The page layouts, the overlay bar, the local time in file names, the in-game update (from 1.5.3 to 1.5.4 and from 1.5.5 to 1.5.6), the online mode and the race refinement during a race have been tried in game;
 - with cars whose data is packed (`data.acd`): gear ratio files are read through CSP (see the J0 report, DIAGNOSTICS tab); with layout tracks: the layout's own `data` folder (surfaces, DRS zones).
 

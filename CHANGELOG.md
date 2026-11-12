@@ -4,15 +4,15 @@
 
 Why this update: a third complete review of the code. Several parts of the physics model did not follow Assetto Corsa closely enough (camber, ABS braking, drivetrain, rolling resistance, hybrids); with the free CSP 0.2.11 the car data could still not be read ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)); and a few smaller defects were found in the interface, the saved data and the lap recorder. From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).
 
-Physics model (your saved calibrations are redone with your next clean laps, as the model changed):
+Physics model (your saved calibrations are redone with your next clean laps, as the model changed). These model changes are checked on the offline bench; they have not been tried in game yet:
 
 - **Camber**: negative camber now gives grip up to the tyre's best angle, then loses it, and camber on the wrong side loses grip. Before, any camber was counted as a loss, so SetupLab tended to propose less negative camber at every refinement.
-- **Braking with ABS**: each axle is held at its own grip limit; the brake bias matters much less, as in the game. Before, moving the bias rearwards looked like a gain. Without ABS, the bias is now converted to a share of braking force (torque divided by each wheel radius).
-- **Drivetrain**: the torque curve reaches the wheels without a fixed 10 % loss; what slows acceleration in low gears is the inertia of the wheels, engine and gearbox, read from the car files.
-- **Rolling resistance** follows the load on the tyres (about 1 % of the weight for a typical tyre), downforce included. It was about three times too low.
+- **Braking with ABS**: the model now holds each axle at its own grip limit, so the brake bias matters much less. Before, moving the bias rearwards looked like a gain. Without ABS, the bias is now converted to a share of braking force (torque divided by each wheel radius).
+- **Drivetrain**: the model applies the torque curve at the wheels without a fixed 10 % loss, and slows acceleration in low gears with the inertia of the wheels, engine and gearbox, read from the car files.
+- **Rolling resistance** follows the load on the tyres (about 1 % of the weight for a typical tyre), downforce included; the tyre coefficients were read as forces before, which gave a much lower value.
 - **Lift**: a body that lifts an axle at speed now takes load off it (road cars were too grippy in fast corners).
 - **Hybrids**: with the ERS deploying, the car can go past the top speed of the combustion engine alone, up to the rev limiter in top gear.
-- **Packer range** is counted from full droop minus the suspension travel read in the pits, as in the game.
+- **Packer range** is counted from full droop minus the suspension travel read in the pits.
 - A tyre compound with another ideal pressure is compared as if its pressure were set for it.
 - A setting outside its grid is simulated at the value in the car; when the fuel is not in the setup, the fuel on board is used; a spring rate a thousand times off (wrong unit in a mod's setup.ini) is left out, with the reason.
 - Tight hairpins (karting) down to a 4 m radius; downforce and ride height converge without oscillating; the ERS plan no longer creates garbage during computing.
