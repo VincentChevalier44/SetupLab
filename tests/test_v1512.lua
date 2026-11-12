@@ -370,6 +370,51 @@ tests['CP10 mode inerte (replay) : SetupLab.state jamais écrit'] = function()
   T.eq(#h.stores, n, 'aucune écriture en mode inerte')
 end
 
+-- Avis de wattu (Overtake, 10/11/2026, « Setup not saved: current setup unreadable »), reproduit au banc le 12/11/2026 :
+-- seul un CSP qui rend une copie vide du setup en cours partout le produit (pas seulement dans la coroutine de la
+-- découverte : la relecture au clic suffisait déjà). Message : cause et action ; réponse de CSP au journal.
+tests["WA01 copie vide du setup en cours : enregistrement refusé avec la cause et l'action ; vide en tâche seulement : enregistré"] =
+    function()
+  local function run(everywhere)
+    local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+    local real = h.ac.stringifyCurrentSetup
+    h.ac.stringifyCurrentSetup = function(...)
+      if everywhere or coroutine.running() ~= nil then return '' end
+      return real(...)
+    end
+    Fake.install(h)
+    assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+    local app = rawget(_G, 'SETUPLAB').app
+    app.settings.optBudgetEvalsQ = 80
+    for _ = 1, 60000 do
+      frames(h, 1)
+      if app.discoveryState == 'done' then break end
+    end
+    app.handleIntents({ qualiStart = true })
+    for _ = 1, 60000 do
+      frames(h, 1)
+      if app.quali and app.quali.state == 'done' then break end
+    end
+    T.eq(app.quali and app.quali.state, 'done', 'calcul')
+    app.handleIntents({ qualiSave = true })
+    return h, app
+  end
+  local h, app = run(true)
+  T.ok(app.ui.message:find('copie vide du setup en cours', 1, true), app.ui.message)
+  T.ok(app.ui.message:find('rapport J0', 1, true), 'action dite')
+  local L = require('src/i18n')
+  L.set('en')
+  T.ok(L.t(app.ui.message):find('CSP returned an empty copy', 1, true), 'traduit : ' .. L.t(app.ui.message))
+  L.set('fr')
+  local logged = false
+  for _, line in ipairs(h.cspLog) do
+    if line:find('stringifyCurrentSetup : découverte vide, relecture vide', 1, true) then logged = true end
+  end
+  T.ok(logged, 'réponse de CSP au journal')
+  h, app = run(false)
+  T.ok(app.saved.quali ~= nil, 'vide dans la tâche seulement : enregistré (' .. tostring(app.ui.message) .. ')')
+end
+
 tests['CP11 liaison connectée : aucune table créée par image (lecture du pont, voitures du trafic)'] = function()
   local c = Companion.new()
   c.installed, c.opened = true, true

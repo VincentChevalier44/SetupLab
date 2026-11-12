@@ -16,7 +16,9 @@ With AdvancedIA installed and running (checked on the offline bench; not yet tri
 
 For SpotterEnginer: SetupLab publishes a short read-only key (setup in the car, planned fuel and consumption, target hot pressures, refinement state, trial-lap verdicts), so the race engineer can announce a new version ready, whether a trial is better or worse, and start from SetupLab's fuel figure. Rewritten only when a value changes, never in replays or online pauses.
 
-Offline test bench: 477 tests (11 new).
+Saving a setup: when CSP returns an empty copy of the current setup (the "Setup not saved: current setup unreadable" message reported on Overtake), the message now says what to do (click again in the pits with the setup menu open; otherwise send the J0 report with your CSP version), and the log records what CSP returned. Reproduced on the bench: it happens only when CSP returns an empty copy everywhere, not only during the discovery.
+
+Offline test bench: 478 tests (12 new).
 
 ## 1.0.0-beta.1.5.11 — 2026-11-12 — beta 1.5.11: physics model corrected, CSP 0.2.11 car data, smoother computing
 
