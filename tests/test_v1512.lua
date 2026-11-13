@@ -452,4 +452,42 @@ tests['CP11 liaison connectée : aucune table créée par image (lecture du pont
   T.no(Companion.carIdle(c, 1))
 end
 
+tests['HC01 appel de CSP depuis une tâche : nombre exact d\'arguments (ac.hasTrackSpline, journal du 13/11)'] = function()
+  local seen = {}
+  local function strict(n)
+    return function(...)
+      seen[#seen + 1] = select('#', ...)
+      if select('#', ...) ~= n then error('wrong number of arguments for function call') end
+      return 'ok' .. n
+    end
+  end
+  local s = Util.schedulerNew()
+  local got = {}
+  Util.schedulerAdd(s, 'hc', function()
+    got[1] = { Util.callHost(strict(0)) }
+    got[2] = { Util.callHost(strict(1), 7) }
+    got[3] = { Util.callHost(strict(2), nil, nil) }
+    got[4] = { Util.callHost(strict(5), 1, 2, 3, 4, 5) }
+    return true
+  end)
+  for _ = 1, 10 do Util.schedulerStep(s, nil, 0, 100) end
+  T.eq(#seen, 4, 'quatre appels faits sur le fil principal')
+  T.eq(seen[1], 0)
+  T.eq(seen[2], 1)
+  T.eq(seen[3], 2, 'nil explicites comptés')
+  T.eq(seen[4], 5)
+  for i, n in ipairs({ 0, 1, 2, 5 }) do
+    T.ok(got[i][1] == true and got[i][2] == 'ok' .. n, 'appel ' .. i .. ' : ' .. tostring(got[i][2]))
+  end
+  -- géométrie du circuit lue en tâche avec une ligne IA stricte (fakehost)
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  local t = nil
+  Util.schedulerAdd(s, 'track', function(c) t = Datasource.sampleTrack(h, 10, c); return true end)
+  for _ = 1, 2000 do
+    Util.schedulerStep(s, nil, 0, 1000)
+    if t then break end
+  end
+  T.ok(t ~= nil and t.ok, 'ligne IA lue en tâche : ' .. tostring(t and t.reason))
+end
+
 return tests
