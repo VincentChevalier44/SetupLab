@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0-beta.1.5.12 — 2026-11-12 — beta 1.5.12: works with AdvancedIA and SpotterEnginer
+## 1.0.0-beta.2.0.0 — 2026-11-14 — beta 2.0.0: works with AdvancedIA and SpotterEnginer
 
 Why this update: SetupLab now works hand in hand with two companion apps by the same author, AdvancedIA (AI race director) and SpotterEnginer (spotter and race engineer). SetupLab stays fully independent: without them, nothing changes and nothing new is shown. From 1.5.4, click **Update** in the SetupLab window.
 
