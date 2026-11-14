@@ -4,11 +4,11 @@
 
 Why this update: SetupLab now works hand in hand with two companion apps by the same author, AdvancedIA (AI race director) and SpotterEnginer (spotter and race engineer). SetupLab stays fully independent: without them, nothing changes and nothing new is shown. From 1.5.4, click **Update** in the SetupLab window.
 
-With AdvancedIA installed and running (checked on the offline bench; not yet tried in game):
+With AdvancedIA 2.0.0 or newer installed and running (checked on the offline bench; not yet tried in game):
 
 - Laps driven under safety car, VSC, FCY, red flag, formation lap, yellow flag, a delta to respect or a penalty (slow-down, drive-through, black flag) count in AC's times only: they are left out of the calibration, race pace, fuel consumption and tyre wear. AdvancedIA judges each lap; SetupLab waits up to 1.5 s after the line for its verdict.
 - Race rules: mandatory stops and a maximum stint length cap the stint (and so the starting fuel); DRS disabled by the rules is not counted in the computations; with a mandatory tyre change, the pit stop preset gets the best allowed compound other than the fitted one.
-- Cars stopped or off the track (according to AdvancedIA) no longer count as traffic.
+- Cars stopped, off the track or retired (according to AdvancedIA) no longer count as traffic.
 - When AdvancedIA costs more than 1.5 ms per frame, SetupLab's computing slice shrinks by the difference.
 - When AdvancedIA sees the same track state, the dry/wet switch happens at once instead of after the usual delay.
 - A setting "Use AdvancedIA's data" appears in the SETTINGS tab only when AdvancedIA is installed. A "Rules" line appears in the stint panel only when a rule applies.
@@ -32,7 +32,7 @@ Workflow review (fixed):
 - A setup name you choose that already ends with the type in another case ("spa_quali") or is the type alone ("Quali") is written in the expected form, so its versions are recognised.
 - "Car's default setup" is only offered when CSP gives the default values (not with the free CSP 0.2.11, where it could only fail).
 
-Offline test bench: 486 tests (20 new).
+Offline test bench: 487 tests (21 new).
 
 ## 1.0.0-beta.1.5.11 — 2026-11-12 — beta 1.5.11: physics model corrected, CSP 0.2.11 car data, smoother computing
 

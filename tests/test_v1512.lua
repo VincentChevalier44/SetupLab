@@ -44,7 +44,7 @@ local function fakeAia(h, aia)
   end
   h.ac.load = function(key) return h.storeValues and h.storeValues[key] or nil end
   if aia.bridge ~= false then
-    aia.hello = { bridgeVersion = 1, release = 'Beta 1.63', heartbeat = 0, closed = false }
+    aia.hello = { bridgeVersion = 2, release = 'Beta 2.0.0', heartbeat = 0, closed = false }
     aia.data = { enabled = true, ready = true, online = false, replay = false, paused = false, panic = false, guard = '',
       wet = false, neutral = false, red = false, mandatoryStops = 0, maxStintMin = 0, cars = {} }
     h.connects = 0
@@ -174,10 +174,10 @@ tests['CP03 liaison : battement, arrêt, fermeture, autre version, moteur suspen
   T.eq(app.companion.state, 'suspended')
   T.no(app.companionUsing, 'moteur suspendu : rien d\'utilisé')
   aia.data.paused = false
-  aia.hello.bridgeVersion = 2
-  frames(h, 1, aia)
-  T.eq(app.companion.state, 'version')
   aia.hello.bridgeVersion = 1
+  frames(h, 1, aia)
+  T.eq(app.companion.state, 'version', 'pont v1 (AdvancedIA 1.63) : refusé')
+  aia.hello.bridgeVersion = 2
   aia.hello.closed = true
   frames(h, 1, aia)
   T.eq(app.companion.state, 'closed')
@@ -415,10 +415,27 @@ tests["WA01 copie vide du setup en cours : enregistrement refusé avec la cause 
   T.ok(app.saved.quali ~= nil, 'vide dans la tâche seulement : enregistré (' .. tostring(app.ui.message) .. ')')
 end
 
+tests['CP12 pont v2 (AdvancedIA 2.0.0) : voiture abandonnée ignorée dans le trafic'] = function()
+  local c = Companion.new()
+  c.installed, c.opened = true, true
+  c.hello = { bridgeVersion = 2, heartbeat = 1, closed = false }
+  local cars = {}
+  cars[1] = { valid = true, halt = false, onTrack = true, retired = false, lastReason = 5 }
+  cars[2] = { valid = true, halt = false, onTrack = true, retired = true, lastReason = 0 }
+  cars[3] = { valid = false, retired = true }
+  c.data = { enabled = true, ready = true, wet = false, mandatoryStops = 0, maxStintMin = 0, trackWarnings = 3,
+    serveLaps = 3, cars = cars }
+  Companion.step(c, { ac = { load = function() return 'v=1;lastLapId=3;lastLapClean=1' end } }, 0)
+  T.eq(c.state, 'connected')
+  T.no(Companion.carIdle(c, 1), 'en course, même sanctionnée : trafic')
+  T.ok(Companion.carIdle(c, 2), 'abandonnée : ignorée')
+  T.no(Companion.carIdle(c, 3), 'entrée non valide : rien supposé')
+end
+
 tests['CP11 liaison connectée : aucune table créée par image (lecture du pont, voitures du trafic)'] = function()
   local c = Companion.new()
   c.installed, c.opened = true, true
-  c.hello = { bridgeVersion = 1, heartbeat = 1, closed = false }
+  c.hello = { bridgeVersion = 2, heartbeat = 1, closed = false }
   local cars = {}
   for i = 0, 3 do cars[i] = { valid = true, halt = i == 2, onTrack = true } end
   c.data = { enabled = true, ready = true, wet = false, mandatoryStops = 1, maxStintMin = 0, cars = cars }

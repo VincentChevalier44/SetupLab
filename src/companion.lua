@@ -2,7 +2,7 @@
 --
 -- SetupLab reste indépendante : sans AdvancedIA (ou sans ac.connect, CSP 0.2.11), rien ne change, rien n'est affiché.
 -- Avec AdvancedIA en marche, lecture seule (jamais d'écriture dans ses structures) :
---   pont v1 (ac.connect, src/bridge_layout.lua copié à l'identique d'AdvancedIA et de SpotterEnginer) : battement,
+--   pont v2 (AdvancedIA 2.0.0 ; ac.connect, src/bridge_layout.lua copié à l'identique d'AdvancedIA) : battement,
 --     fermeture, état du moteur, pluie, coût, voitures (filtre de trafic) ;
 --   clé ac.store « AdvancedIA.session » (AdvancedIA 1.63) : verdict du tour du joueur (neutralisation, drapeau, pénalité),
 --     règles de la séance (gommes, arrêts, DRS), coût par image, rythme des IA. Texte « v=1;clé=valeur;… ».
@@ -252,13 +252,14 @@ function M.rules(c)
   return r
 end
 
--- Voiture d'AC (indice ≥ 1) à ignorer dans le filtre de trafic : arrêtée ou hors de la piste selon AdvancedIA.
+-- Voiture d'AC (indice ≥ 1) à ignorer dans le filtre de trafic : arrêtée, hors de la piste ou abandonnée (pont v2)
+-- selon AdvancedIA.
 function M.carIdle(c, index)
   if not M.connected(c) or c.data == nil or index == nil or index < 0 or index >= Layout.maxCars then return false end
   local cars = field(c.data, 'cars')
   local car = cars and field(cars, index)
   if car == nil or field(car, 'valid') ~= true then return false end
-  return field(car, 'halt') == true or field(car, 'onTrack') == false
+  return field(car, 'halt') == true or field(car, 'onTrack') == false or field(car, 'retired') == true
 end
 
 -- Composé du preset d'arrêt quand un changement est obligatoire : le meilleur composé permis (J le plus bas de la

@@ -10,9 +10,9 @@
 -- (jamais d'instant absolu : l'horloge d'ACAdvancedIA s'arrête en pause et repart de zéro au-delà de 24 h) ; un
 -- événement d'une image est un compteur (serial) qui change, jamais un booléen d'une image.
 local L={}
-L.version=1
+L.version=2
 L.helloKey='ACAdvancedIA.Bridge.Hello'
-L.dataKey='ACAdvancedIA.Bridge.Data.v1'
+L.dataKey='ACAdvancedIA.Bridge.Data.v2'
 L.maxCars=61
 -- Types : bool, int (int32), uint (uint32), float, double, string (capacité en octets, fin comprise).
 L.hello={
@@ -62,6 +62,10 @@ L.fields={
  {'correctedPosition','int'},
  -- Annonce de sanction d'une IA (panneau de l'overlay)
  {'aiSerial','uint'},{'aiCode','string',8},{'aiTitle','string',48},{'aiShort','string',128},{'aiBlack','bool'},
+ -- Version 2 (AdvancedIA 1.64) : règles des sanctions de la session : avertissements de limites de piste avant la
+ -- première pénalité (sanTrackWarnings, 0 = pénalité directe) et tours pour purger une pénalité aux stands
+ -- (sanServeLaps ; tours restants d'une voiture = serveLaps - pendingLaps).
+ {'trackWarnings','int'},{'serveLaps','int'},
 }
 -- Une entrée par voiture (indice d'AC), L.maxCars au plus.
 L.car={
@@ -73,6 +77,12 @@ L.car={
  {'failure','int'},{'critical','bool'},{'called','bool'},
  {'stops','int'},{'boxed','bool'},{'stintFor','float'},
  {'mistakeId','uint'},{'mistakeKind','int'},{'overtake','bool'},
+ -- Version 2 (AdvancedIA 1.64, décision du pilote du 14 novembre) : IA abandonnée (dépannée en course, garée jusqu'à la
+ -- fin) ; jamais une disqualification (sanctionDq, flagDq).
+ {'retired','bool'},
+ -- Version 2 : raison de la dernière sanction ou pénalité émise pour cette IA (code de L.reasons), gardée jusqu'à la
+ -- suivante, 0 au début de la séance ; jamais écrite pour un simple avertissement de limites de piste (code 1 réservé).
+ {'lastReason','int'},
 }
 -- Codes des champs entiers des voitures.
 L.pending={[0]='',[1]='drive',[2]='stopgo'}
@@ -80,6 +90,10 @@ L.causes={[0]='',[1]='tyres',[2]='fuel',[3]='undercut',[4]='overcut',[5]='weathe
 L.limits={[0]='',[1]='tyres',[2]='fuel'}
 L.failures={[0]='',[1]='leak',[2]='battery',[3]='overheat',[4]='puncture'}
 L.mistakes={[0]='',[1]='brake',[2]='traction'}
+-- Version 2 : codes de lastReason ; 99 = autre raison (un lecteur affiche « autre » pour tout code inconnu).
+L.reasons={[0]='',[1]='trackWarning',[2]='trackLimits',[3]='cut',[4]='blueFlags',[5]='contact',[6]='jumpStart',[7]='pitSpeed',
+ [8]='pitExit',[9]='giveBack',[10]='flag',[11]='ignored',[12]='repeated',[13]='wrongWay'}
+L.reasonOther=99
 -- Code d'un nom (0 si inconnu).
 function L.code(list,name)
  if name==nil or name=='' then return 0 end
