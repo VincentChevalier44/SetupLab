@@ -8,7 +8,7 @@ SetupLab computes, for every car and track, a **qualifying** setup (practice, tr
 
 The app is in **English by default**, with a full **French** translation (one click on the EN/FR badge).
 
-📖 **User guide: [`docs/notice.html`](docs/notice.html)** (open it in a browser; it is also in the app archive, with the French version `docs/notice.fr.html`).
+📖 **Interactive user guide: [vincentchevalier44.github.io/SetupLab](https://vincentchevalier44.github.io/SetupLab/)** (updated with each version; [French version](https://vincentchevalier44.github.io/SetupLab/?lang=fr)). The guide is also in the app archive: `docs/notice.html`, French `docs/notice.fr.html`.
 
 ---
 
@@ -63,7 +63,7 @@ To install by hand (and to go from 1.5.2 or older to this version): **delete the
 4. Drive with it, then click **Validate v1** (or **Modify…** to refuse a particular setting first). SetupLab then asks: **Carry on refining** (a new version with your next laps, starting from it) or **Lock v1**.
 5. For the race: the RACE tab lists your validated qualifying versions. **Start from qualifying vN** puts it in the car and starts the race refinement; enter the race lap count.
 
-Every button, tab and setting is described in the [user guide](docs/notice.html).
+Every button, tab and setting is described in the [interactive user guide](https://vincentchevalier44.github.io/SetupLab/).
 
 ## What SetupLab never does
 
