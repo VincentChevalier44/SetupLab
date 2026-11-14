@@ -1906,6 +1906,19 @@ local function qualiBlocker()
 end
 app.qualiBlocker = qualiBlocker
 
+-- Calcul impossible pour de bon avec cette voiture (relecture du 14/11/2026 : la carte disait « Rouler » et l'affinage
+-- relançait un essai toutes les 10 s sans fin) : raison, ou nil. Les causes qu'un tour ou une nouvelle découverte lève
+-- (circuit appris d'un tour, composé illisible, découverte en cours) n'en sont pas.
+function app.qualiImpossible()
+  if app.inert or app.discoveryState ~= 'done' then return nil end
+  local d = app.discovery
+  if d.carModelError or (d.car and d.car.ini['car.ini'] == nil and d.car.ini['tyres.ini'] == nil)
+      or d.carBase == nil or #(d.carBaseMissing or {}) > 0 or d.space == nil or #(d.optimizable or {}) == 0 then
+    return qualiBlocker()
+  end
+  return nil
+end
+
 -- Setup de course (décision de Vincent du 26/10/2026) : « il faut attendre d'avoir fait un setup de qualification
 -- avant, et le setup de course sera calculé sur le rythme sur le setup qui a déjà été fait en qualification et qui est
 -- validé » ; « l'utilisateur devra saisir le nombre de tours ». Référence de tour rapide validée de ce circuit et de cet
@@ -2402,12 +2415,16 @@ app.loadBlocker = loadBlocker
 
 -- Valeurs (VALUE) de chaque section d'un setup au format d'AC, hors [CAR] et [__EXT_PATCH] :
 -- carburant et composé compris.
+-- Les alias de CSP (INTERNAL_GEAR_n, FINAL_RATIO) sont rangés sous le nom du cran (GEAR_n, FINAL_GEAR_RATIO) : retouches,
+-- signatures et comparaisons cherchent les noms des crans (relecture du 14/11/2026).
 local function setupValues(text)
   local ini = Util.parseIni(text)
   local out = {}
   for name, section in pairs(ini.sections) do
     if name ~= 'CAR' and name ~= '__EXT_PATCH' and section.VALUE ~= nil then
-      out[name] = Util.parseNumber(section.VALUE) or section.VALUE
+      local gear = name:match('^INTERNAL_GEAR_(%d+)$')
+      local key = gear and ('GEAR_' .. gear) or (name == 'FINAL_RATIO' and 'FINAL_GEAR_RATIO') or name
+      if key == name or ini.sections[key] == nil then out[key] = Util.parseNumber(section.VALUE) or section.VALUE end
     end
   end
   return out
@@ -3936,6 +3953,18 @@ local function defaultSetup(d)
   return text, values
 end
 
+-- Départ « Setup par défaut » possible : un cran au moins donne sa valeur par défaut (relecture du 14/11/2026 : en CSP
+-- 0.2.11, crans relus de setup.ini sans valeur par défaut, le bouton ne menait qu'à un refus).
+function app.defaultAvailable()
+  local d = app.discovery
+  for _, sp in ipairs(d and d.setup and d.setup.spinners or {}) do
+    if Util.isFinite(sp.defaultValue) and sp.name ~= 'FUEL' and not tostring(sp.name):find('^CUSTOM_SCRIPT') then
+      return true
+    end
+  end
+  return false
+end
+
 local function refineStop()
   local r = app.refine
   if not (r and r.active) then return end
@@ -4297,6 +4326,11 @@ local function refineJudge(version, verdict)
     end
   elseif verdict == 'essayer' then
     refineTry(r, e)
+  elseif r.kind == 'race' and r.driven == e.version and raceRunning() then
+    -- relecture du 14/11/2026 : écarter pendant la course la version en piste ne rechargeait rien (rien n'est chargé en
+    -- course) et toute la course était perdue pour l'analyse (« parti d'une version non gardée ») ; à juger à l'arrivée
+    app.ui.message = 'v' .. e.version .. ' est dans la voiture pendant la course : jugez-la à l\'arrivée (rien n\'est '
+      .. 'chargé en course).'
   else
     refineReject(r, e)
   end

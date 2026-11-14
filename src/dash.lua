@@ -11,8 +11,11 @@ local L = require('src/i18n')
 local Skin = require('src/skin')
 local SetupSpace = require('src/setup_space')
 local Window = require('src/window')
+local ErsMap = require('src/ers_map')
 
 local M = { frame = 0 }
+-- légende de la carte ERS : état d'un point du tracé, libellé
+local ERS_LEGEND = { { 2, 'déployer' }, { 1, 'profil de la voiture' }, { 0, 'récupérer, lever, freiner' } }
 local K = Config.K
 
 -- contexte de l'image en cours (une seule fenêtre dessinée à la fois) et vec2 réutilisés (aucune allocation par image)
@@ -1306,6 +1309,78 @@ local function speedPanel(r, current, x, y, w, h, dry)
   return h
 end
 
+-- ERS (1.5.12, demande de Vincent du 14/11/2026) : carte du circuit, zones où déployer en couleurs (plan de SetupLab),
+-- programme de déploiement conseillé au départ. Carte construite une fois par résultat et par tracé (aucune allocation
+-- par image ensuite) ; jamais dessinée sur un autre tracé que celui du calcul. Renvoie la hauteur (0 sans plan ERS).
+local ersMapCache = { result = nil, track = nil, map = nil }
+local function ersMapOf(result)
+  local e = result and result.ers and result.ers.proposed
+  local d = X.app.discovery
+  local track = d and d.trackModel
+  if e == nil or track == nil or type(e.zones) ~= 'table' or #e.zones == 0 then return nil end
+  local length = result.profileCurrent and result.profileCurrent.length
+  if not (Util.isFinite(length) and math.abs(length - (track.length or 0)) < 1) then return nil end
+  local cache = ersMapCache
+  if cache.result ~= result or cache.track ~= track then
+    cache.result, cache.track = result, track
+    cache.map = ErsMap.build(track, e.zones, track.closed)
+  end
+  return cache.map, e
+end
+
+local function ersPanel(result, x, y, w, dry)
+  local map, e = ersMapOf(result)
+  if map == nil then return 0 end
+  local mapW = math.min(w - 28, 520)
+  local mapH = math.max(120, math.min(260, mapW * map.aspect))
+  local h = 34 + mapH + 50
+  if dry then return h end
+  local c = X.c
+  panel(x, y, x + w, y + h)
+  lab('ERS · où déployer', x + 14, y + 10)
+  local note = L.t('plan de SetupLab, à confirmer en jeu')
+  text('text', 10.5, note, x + w - 14 - measure('text', 10.5, note), y + 9, c.grey)
+  -- tracé : carte d'AC (x vers la droite, z vers le bas), proportions gardées, centré dans la boîte
+  local bx, by = x + 14, y + 30
+  local scale = math.min(mapW / math.max(map.width, 1e-6), mapH / math.max(map.height, 1e-6))
+  local ox = bx + (w - 28 - map.width * scale) / 2
+  local oy = by + (mapH - map.height * scale) / 2
+  local colors = ersMapCache.colors
+  if colors == nil then
+    colors = {}
+    ersMapCache.colors = colors
+  end
+  colors[ErsMap.DEPLOY], colors[ErsMap.PROFILE], colors[ErsMap.NONE] = c.go, c.warn, c.dim
+  local n = map.n
+  local last = map.closed and n or n - 1
+  for j = 1, last do
+    local k = j % n + 1
+    local st = map.state[j]
+    line(ox + map.x[j] * scale, oy + map.y[j] * scale, ox + map.x[k] * scale, oy + map.y[k] * scale, colors[st] or c.dim,
+      st == ErsMap.NONE and 2 or 4)
+  end
+  -- départ (carré blanc) et sens de marche (trait vers le point suivant)
+  local sx, sy = ox + map.x[1] * scale, oy + map.y[1] * scale
+  rect(sx - 4, sy - 4, sx + 4, sy + 4, c.light)
+  local len = math.sqrt(map.dirX * map.dirX + map.dirY * map.dirY)
+  if len > 0 then line(sx, sy, sx + map.dirX / len * 16, sy + map.dirY / len * 16, c.light, 2) end
+  -- légende et programme conseillé
+  local ly = by + mapH + 8
+  local lx = x + 14
+  for _, it in ipairs(ERS_LEGEND) do
+    rect(lx, ly + 6, lx + 14, ly + 9, colors[it[1]])
+    local s = L.t(it[2])
+    text('text', 11, s, lx + 20, ly, c.soft)
+    lx = lx + 20 + measure('text', 11, s) + 18
+  end
+  local best = e.bestProfile
+  if best and best.index ~= nil then
+    local s = L.f('Programme de déploiement conseillé au départ (MGU-K) : %s « %s »', best.index, tostring(best.name or ''))
+    text('text', 11, fitted('text', 11, s, w - 28), x + 14, ly + 22, c.light)
+  end
+  return h
+end
+
 -- versions de l'affinage : tuiles (validée, non gardée, à juger), nom du fichier, arrêt
 local function versionsPanel(kind, r, x, y, w, dry)
   local app, c = X.app, X.c
@@ -1726,6 +1801,8 @@ local function kindPage(kind, x, y, w)
       local hs = speedPanel(result, current, x, cy, w, 110)
       if hs > 0 then cy = cy + hs + 8 end
     end
+    local he = ersPanel(result, x, cy, w)
+    if he > 0 then cy = cy + he + 8 end
   end
   local hv = versionsPanel(kind, r, x, cy, w)
   if hv > 0 then cy = cy + hv + 8 end
@@ -2104,6 +2181,8 @@ local function racePage(x, y, w)
   end
   local hc = changesPanel('race', e, result, x, cy, w)
   if hc > 0 then cy = cy + hc + 8 end
+  local he = ersPanel(result, x, cy, w)
+  if he > 0 then cy = cy + he + 8 end
   if result and result.race then
     text('text', 11.5, L.t('Carburant et réparations de l\'arrêt restent les vôtres.'), x + 2, cy, X.c.grey)
     cy = cy + 22

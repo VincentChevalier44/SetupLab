@@ -490,4 +490,229 @@ tests['HC01 appel de CSP depuis une tâche : nombre exact d\'arguments (ac.hasTr
   T.ok(t ~= nil and t.ok, 'ligne IA lue en tâche : ' .. tostring(t and t.reason))
 end
 
+tests['NM01 noms de réglages du scan des voitures : reconnus, jamais optimisés ni ouverts par une mesure'] = function()
+  local Space = require('src/setup_space')
+  local expect = {
+    ARB_F = 'carNamed', ARB_R = 'carNamed', SPRING_LF = 'carNamed', BUMPSTOP_RR = 'carNamed',
+    DAMPER_BUMP_LF = 'carNamed', DAMPER_FAST_REBOUND_RR = 'carNamed', PACKER_RANGE_HF = 'heaveStop',
+    BUMPSTOP_HR = 'heaveStop', MGUK_DELIVERY = 'ers', MGUK_RECOVERY = 'ers', MGUH_MODE = 'ers', TURBO = 'turbo',
+    BRAKE_ENGINE = 'engineBrake', STEER_ASSIST = 'steerAssist', GEARSET = 'gearset', ABOUT = 'info',
+    INTERNAL_GEAR_3 = 'gear', FINAL_RATIO = 'final',
+  }
+  for name, kind in pairs(expect) do
+    local r = Space.classify(name)
+    T.eq(r.kind, kind, name)
+    if kind ~= 'gear' and kind ~= 'final' then
+      T.eq(r.class, Space.EXCLUDED, name .. ' conservé')
+      T.ok(type(r.reason) == 'string' and r.reason ~= Space.KEPT.unknown, name .. ' : raison propre')
+    end
+  end
+  -- noms d'AC inchangés
+  T.eq(Space.classify('ARB_FRONT').kind, 'arb')
+  T.eq(Space.classify('SPRING_RATE_LF').kind, 'spring')
+  T.eq(Space.classify('PACKER_RANGE_LF').kind, 'packer')
+  T.eq(Space.classify('ENGINE_MAPS').kind, 'engineMap')
+  T.eq(Space.classify('CUSTOM_SCRIPT_ITEM_7').kind, 'script')
+  -- une mesure de rugosité ouvre les ressorts d'AC, jamais un nom propre à la voiture
+  local spinners = {
+    { name = 'SPRING_RATE_LF', label = 'Ressort', min = 0, max = 10, step = 1, value = 5 },
+    { name = 'SPRING_LF', label = 'Spring LF', min = 0, max = 10, step = 1, value = 5 },
+  }
+  local space = Space.build({ spinners = spinners })
+  Space.release(space, 'spring', Space.REDUCED, 'test')
+  for _, var in ipairs(space.vars) do
+    if var.kind == 'carNamed' then
+      T.eq(var.class, Space.EXCLUDED, 'nom propre resté conservé')
+      T.eq(var.label, 'Spring LF', 'libellé de CSP affiché')
+    end
+  end
+  -- chaque raison nouvelle est traduite
+  local L = require('src/i18n')
+  for _, key in ipairs({ 'carNamed', 'heaveStop', 'ers', 'turbo', 'engineBrake', 'gearset', 'info' }) do
+    T.ok(require('src/lang_en')[Space.KEPT[key]] ~= nil, 'traduction : ' .. key)
+  end
+  T.ok(L ~= nil)
+end
+
+tests['EM01 carte ERS : zones en couleurs (part déployée, profil, franchissement de la ligne), proportions, autre tracé refusé'] = function()
+  local ErsMap = require('src/ers_map')
+  -- tracé en ellipse de 1000 m, 400 points, deux fois plus large que haut
+  local t = { n = 400, x = {}, z = {}, s = {}, length = 1000, closed = true }
+  for k = 1, t.n do
+    local a = (k - 1) / t.n * 2 * math.pi
+    t.x[k], t.z[k], t.s[k] = 200 * math.cos(a), 100 * math.sin(a), (k - 1) / t.n * 1000
+  end
+  local zones = { { s0 = 100, s1 = 300, fraction = 0.5 }, { s0 = 500, s1 = 600, profile = true }, { s0 = 900, s1 = 50 } }
+  T.eq(ErsMap.stateAt(zones, 150, 1000), ErsMap.DEPLOY, 'début de zone déployé')
+  T.eq(ErsMap.stateAt(zones, 250, 1000), ErsMap.NONE, 'fin de zone (½) sans déploiement')
+  T.eq(ErsMap.stateAt(zones, 550, 1000), ErsMap.PROFILE)
+  T.eq(ErsMap.stateAt(zones, 980, 1000), ErsMap.DEPLOY, 'zone qui franchit la ligne, avant')
+  T.eq(ErsMap.stateAt(zones, 20, 1000), ErsMap.DEPLOY, 'zone qui franchit la ligne, après')
+  T.eq(ErsMap.stateAt(zones, 700, 1000), ErsMap.NONE)
+  local map = assert(ErsMap.build(t, zones, true))
+  T.ok(map.n <= ErsMap.MAX_POINTS and map.n >= 100, 'sous-échantillonné : ' .. map.n)
+  T.near(map.aspect, 0.5, 0.02, 'proportions gardées')
+  for j = 1, map.n do T.ok(map.x[j] >= 0 and map.x[j] <= 1 and map.y[j] >= 0 and map.y[j] <= 1) end
+  T.ok(map.deployed > 0)
+  T.ok(map.dirY > 0, 'sens de marche (z croissant au départ)')
+  -- zones d'un autre tracé (plus long) : refus
+  local m2, why = ErsMap.build(t, { { s0 = 100, s1 = 5000 } }, true)
+  T.eq(m2, nil)
+  T.contains(why, 'autre tracé')
+  T.eq((ErsMap.build(t, {}, true)), nil, 'sans zone')
+  T.eq((ErsMap.build({ n = 3, x = {}, z = {}, s = {}, length = 10 }, zones, true)), nil, 'tracé trop court')
+end
+
+tests['EM02 carte ERS dessinée dans l\'onglet QUALIF (voiture hybride), absente sans ERS ; construite une fois'] = function()
+  local function bootSkin(carId)
+    local h = Fake.new({ car = require('fixtures/cars/' .. carId), track = require('fixtures/tracks/monza'), skin = true,
+      kers = true })
+    h.sim.raceSessionType = 1
+    h.texts = {}
+    local text = h.ui.text
+    h.ui.text = function(s) h.texts[#h.texts + 1] = s; return text(s) end
+    Fake.install(h)
+    assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+    local app = rawget(_G, 'SETUPLAB').app
+    app.settings.optBudgetEvalsQ = 60
+    return h, app
+  end
+  local function run(h, n)
+    for _ = 1, n do
+      h.sim.time = h.sim.time + 1000 / 60
+      h.texts = {}
+      script.SETUPLAB__UPDATE(1 / 60)
+      script.SETUPLAB__MAIN(1 / 60)
+    end
+  end
+  local function shown(h, needle)
+    for _, s in ipairs(h.texts) do if type(s) == 'string' and s:find(needle, 1, true) then return true end end
+    return false
+  end
+  local h, app = bootSkin('urd_px1_aura')
+  for _ = 1, 40000 do
+    run(h, 1)
+    if app.discoveryState == 'done' then break end
+  end
+  T.ok(app.discovery.ers and app.discovery.ers.enabled, 'ERS simulé')
+  h.car.isInPit, h.car.isInPitlane, h.car.speedMs = true, true, 0
+  app.handleIntents({ qualiStart = true })
+  for _ = 1, 200000 do
+    run(h, 1)
+    if app.quali and app.quali.state ~= 'running' then break end
+  end
+  T.eq(app.quali.state, 'done', tostring(app.quali.error))
+  T.ok(app.quali.result.ers and #app.quali.result.ers.proposed.zones > 0, 'zones de déploiement')
+  h.width, h.tab = 764, 'Tour rapide'
+  run(h, 2)
+  T.ok(shown(h, 'à confirmer en jeu'), 'panneau ERS affiché')
+  T.ok(shown(h, 'Programme de déploiement conseillé'), 'programme conseillé')
+  -- carte construite une fois par résultat, pas à chaque image
+  local ErsMap = require('src/ers_map')
+  local build, calls = ErsMap.build, 0
+  ErsMap.build = function(...) calls = calls + 1; return build(...) end
+  run(h, 30)
+  ErsMap.build = build
+  T.eq(calls, 0, 'carte en cache')
+  -- voiture sans ERS : pas de panneau
+  local h2, app2 = bootSkin('lamborghini_huracan_gt3_evo2')
+  for _ = 1, 40000 do
+    run(h2, 1)
+    if app2.discoveryState == 'done' then break end
+  end
+  h2.width, h2.tab = 764, 'Tour rapide'
+  run(h2, 2)
+  T.no(shown(h2, 'à confirmer en jeu'), 'pas de carte sans ERS')
+end
+
+tests['GA01 fichier aux noms INTERNAL_GEAR_n / FINAL_RATIO : valeurs relues sous les noms des crans (retouches, signatures)'] = function()
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza'),
+    gearNames = 'internal' })
+  Fake.install(h)
+  assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+  local app = rawget(_G, 'SETUPLAB').app
+  local text = h.ac.stringifyCurrentSetup(true, false)
+  T.contains(text, '[INTERNAL_GEAR_2]', 'fichier aux noms de CSP')
+  local v = app.setupValues(text)
+  local spinners = h.ac.getSetupSpinners()
+  local seen = 0
+  for _, sp in ipairs(spinners) do
+    if sp.name:match('^GEAR_%d+$') or sp.name == 'FINAL_GEAR_RATIO' then
+      T.eq(v[sp.name], sp.value, sp.name .. ' relu sous le nom du cran')
+      seen = seen + 1
+    end
+  end
+  T.ok(seen >= 2, 'rapports vus : ' .. seen)
+  T.eq(v.INTERNAL_GEAR_2, nil, 'alias rangé sous le nom du cran')
+  T.eq(v.FINAL_RATIO, nil)
+end
+
+tests['IM01 calcul impossible pour de bon : la carte d\'étape le dit (raison, une action), plus d\'étape « Départ »'] = function()
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  h.sim.raceSessionType = 1
+  Fake.install(h)
+  assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+  local app = rawget(_G, 'SETUPLAB').app
+  for _ = 1, 40000 do
+    h.sim.time = h.sim.time + 1000 / 60
+    script.SETUPLAB__UPDATE(1 / 60)
+    if app.discoveryState == 'done' then break end
+  end
+  local Ui = require('src/ui')
+  T.eq(app.qualiImpossible(), nil, 'voiture lisible : possible')
+  local m = Ui.stepModel(app, 'Tour rapide')
+  T.eq(m.step, 1, 'étape Départ')
+  local saved = app.discovery.optimizable
+  app.discovery.optimizable = {}
+  m = Ui.stepModel(app, 'Tour rapide')
+  T.eq(m.title, 'Calcul impossible avec cette voiture')
+  T.contains(m.text, 'aucun réglage optimisable')
+  T.eq(#m.actions, 1)
+  T.ok(m.actions[1].intent.rediscover, 'relancer la découverte')
+  T.eq(m.step, nil, 'pas d\'étape à suivre')
+  -- circuit pas encore appris (un tour le donne) : pas « impossible »
+  app.discovery.optimizable = saved
+  local track = app.discovery.trackModel
+  app.discovery.trackModel = nil
+  T.eq(app.qualiImpossible(), nil, 'circuit à apprendre d\'un tour : pas impossible')
+  app.discovery.trackModel = track
+end
+
+tests["RJ01 course lancée : la version en piste n'est pas écartée (rien ne se recharge en course, analyse gardée)"] = function()
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  Fake.install(h)
+  assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+  local app = rawget(_G, 'SETUPLAB').app
+  for _ = 1, 40000 do
+    h.sim.time = h.sim.time + 1000 / 60
+    script.SETUPLAB__UPDATE(1 / 60)
+    if app.discoveryState == 'done' then break end
+  end
+  h.sim.isSessionStarted = true
+  app.context.sessionType = K.sessionTypeRace
+  T.ok(app.raceRunning(), 'course lancée')
+  local e = { version = 1, signature = 'x', text = "[FUEL]\nVALUE=10\n" }
+  app.refine = { kind = 'race', active = true, driven = 1, version = 1, history = { e } }
+  app.handleIntents({ refineJudge = { version = 1, verdict = 'écarter' } })
+  T.eq(e.status, nil, 'version gardée à juger')
+  T.contains(app.ui.message, "jugez-la à l'arrivée")
+end
+
+tests['FN01 nom choisi qui finit par le genre (autre casse) ou réduit au genre : versions reconnues dans le nom'] = function()
+  local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza') })
+  Fake.install(h)
+  assert(loadfile(PY.appDir .. '/SetupLab.lua'))()
+  local app = rawget(_G, 'SETUPLAB').app
+  -- l'écriture du joueur est gardée (test RG01) ; ses versions sont reconnues quelle que soit la casse
+  for _, name in ipairs({ 'spa_quali', 'Monza_QUALIF', 'Quali', 'spa_Qualif' }) do
+    app.names.quali = name
+    local base = app.fileBase('quali', 'sec')
+    T.eq(base, name, 'nom gardé')
+    local genre = name:lower():find('qualif$') and 'Qualif' or 'Quali'
+    T.eq(Util.versionInName(base .. '_v3.ini', genre), 3, name .. ' : version reconnue')
+    T.eq(Util.versionInName(base .. '_Pluie_v4.ini', genre), 4, name .. ' : version de pluie reconnue')
+  end
+  T.eq(Util.versionInName('spa_Qualif_v2.ini', 'Quali'), nil, 'Qualif n\'est pas Quali')
+end
+
 return tests

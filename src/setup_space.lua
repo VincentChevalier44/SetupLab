@@ -60,6 +60,13 @@ M.KEPT = {
   packer = 'conservé : la course avant butée compte dans le modèle (depuis la détente, moins la course relevée au stand, '
     .. 'H16) ; son réglage n\'est pas optimisé, son effet reste à confirmer en jeu',
   unknown = 'conservé : réglage non reconnu par SetupLab',
+  carNamed = 'conservé : nom de réglage propre à cette voiture, lien avec la physique non vérifié (à confirmer en jeu)',
+  heaveStop = 'conservé : butée du troisième élément non reliée au modèle',
+  ers = 'conservé : réglage de l\'ERS au départ (profil, récupération, MGU-H) ; profil conseillé dans la section ERS',
+  turbo = 'conservé : pression de turbo du setup non reliée au modèle',
+  engineBrake = 'conservé : frein moteur, effet au lever de pied non modélisé',
+  gearset = 'conservé : choix entre jeux de rapports prédéfinis non modélisé',
+  info = 'information de la voiture, pas un réglage',
 }
 
 -- Renvoie la description d'une section : kind, key (variable, réglages groupés par essieu), facteur vers
@@ -147,9 +154,37 @@ function M.classify(name)
   if name == 'FUEL' then
     return { kind = 'fuel', key = 'fuel', factor = 1, class = M.EXCLUDED, reason = 'fixé par la règle de carburant' }
   end
-  local gear = tonumber(name:match('^GEAR_(%d+)$'))
+  -- INTERNAL_GEAR_n / FINAL_RATIO : noms écrits par CSP dans les fichiers de setup (alias, voir ALIASES)
+  local gear = tonumber(name:match('^GEAR_(%d+)$') or name:match('^INTERNAL_GEAR_(%d+)$'))
   if gear then return { kind = 'gear', key = 'gear' .. gear, gear = gear, factor = 1, class = M.LARGE } end
-  if name == 'FINAL_GEAR_RATIO' then return { kind = 'final', key = 'final', factor = 1, class = M.LARGE } end
+  if name == 'FINAL_GEAR_RATIO' or name == 'FINAL_RATIO' then
+    return { kind = 'final', key = 'final', factor = 1, class = M.LARGE }
+  end
+  -- Noms propres à certaines voitures (scan du 14/11/2026 : ARB_F, SPRING_LF, DAMPER_BUMP_LF, BUMPSTOP_LF…) : même rôle
+  -- apparent que les réglages d'AC, mais leur lien avec la physique (unité, cible) n'est pas vérifié ; jamais optimisés,
+  -- ni ouverts par une mesure (genre à part), libellé de CSP affiché
+  if name:match('^ARB_[FR]$') or name:match('^SPRING_[LR][FR]$') or name:match('^BUMPSTOP_[LR][FR]$')
+    or name:match('^DAMPER_[%u_]+_[LR][FR]$') then
+    return { kind = 'carNamed', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.carNamed }
+  end
+  if name:match('^PACKER_RANGE_H[FR]$') or name:match('^BUMPSTOP_H[FR]$') or name:match('^BUMP_STOP_RATE_H[FR]$') then
+    return { kind = 'heaveStop', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.heaveStop }
+  end
+  if name:match('^MGU[KH]_') or name:match('^ERS_') or name:match('^KERS') then
+    return { kind = 'ers', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.ers }
+  end
+  if name == 'TURBO' or name:match('^TURBO_%d+$') then
+    return { kind = 'turbo', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.turbo }
+  end
+  if name == 'BRAKE_ENGINE' or name == 'ENGINE_BRAKE' then
+    return { kind = 'engineBrake', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.engineBrake }
+  end
+  -- genre à part : la règle pluie des aides (genre electronic) ne doit pas toucher l'aide à la direction
+  if name == 'STEER_ASSIST' then
+    return { kind = 'steerAssist', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.electronic }
+  end
+  if name == 'GEARSET' then return { kind = 'gearset', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.gearset } end
+  if name == 'ABOUT' then return { kind = 'info', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.info } end
   if name:match('^BRAKE_DUCT') then
     return { kind = 'brakeDuct', key = name, factor = 1, class = M.EXCLUDED, reason = M.KEPT.brakeDuct }
   end

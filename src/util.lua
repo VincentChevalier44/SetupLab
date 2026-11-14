@@ -253,9 +253,12 @@ end
 
 -- Numéro de version d'un nom de fichier du genre (« …_Qualif_v3… », « …_Qualif_Pluie_v3… » ; wet : mot de la
 -- pluie, « Pluie » par défaut), ou nil.
+-- Sans tenir compte de la casse, genre au début du nom compris (relecture du 14/11/2026 : un nom choisi « spa_quali » ou
+-- « Quali » garde son écriture, et ses versions doivent rester reconnues).
 function M.versionInName(name, genre, wet)
-  local s = tostring(name)
-  local v = s:match('_' .. genre .. '_v(%d+)[%._%-]') or s:match('_' .. genre .. '_' .. (wet or 'Pluie') .. '_v(%d+)[%._%-]')
+  local s = '_' .. tostring(name):lower()
+  genre, wet = tostring(genre):lower(), tostring(wet or 'Pluie'):lower()
+  local v = s:match('_' .. genre .. '_v(%d+)[%._%-]') or s:match('_' .. genre .. '_' .. wet .. '_v(%d+)[%._%-]')
   return v and tonumber(v) or nil
 end
 

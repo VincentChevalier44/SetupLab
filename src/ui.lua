@@ -2343,7 +2343,14 @@ function M.stepModel(app, selected)
   local running, finished = raceRun(app), kind == 'race' and raceEnd(app)
   local inRace = kind == 'race' and raceIn(app)
   local sessionStart = false
-  if inRace and not (r and r.active) and not locked then
+  local impossible = app.qualiImpossible and app.qualiImpossible()
+  if impossible then
+    -- calcul impossible pour de bon (voiture illisible, modèle incomplet, aucun réglage optimisable) : aucune étape à
+    -- suivre, la raison et une seule action
+    title, text, color = 'Calcul impossible avec cette voiture', impossible, 'unavailable'
+    actions[1] = { label = 'Relancer la découverte###step_rediscover', intent = { rediscover = true }, style = 'primary',
+      tip = 'Relit la voiture et le circuit (après un changement de voiture, de CSP ou de fichiers).' }
+  elseif inRace and not (r and r.active) and not locked then
     -- séance de course, affinage pas lancé (demande de Vincent du 05/11/2026) : il part du setup en place
     sessionStart, step = true, 1
     title, text = 'Séance de course · Affiner pendant la course', 'SetupLab part du setup qui est dans la voiture et analyse '
@@ -2384,9 +2391,11 @@ function M.stepModel(app, selected)
     actions[#actions + 1] = { label = 'Mon setup actuel###start_mine', intent = withUnlock({ start = { kind = kind, mode = 'mine' } }),
       style = #actions == 0 and 'primary' or nil,
       tip = 'Le setup qui est dans la voiture : le vôtre (chargé depuis le menu de setup d\'AC) ou celui par défaut.' }
-    actions[#actions + 1] = { label = 'Setup par défaut de la voiture###start_default',
-      intent = withUnlock({ start = { kind = kind, mode = 'default' } }),
-      tip = 'Le setup d\'origine de la voiture : écrit dans un fichier SetupLab, chargé au stand, puis affiné.' }
+    if app.defaultAvailable == nil or app.defaultAvailable() then
+      actions[#actions + 1] = { label = 'Setup par défaut de la voiture###start_default',
+        intent = withUnlock({ start = { kind = kind, mode = 'default' } }),
+        tip = 'Le setup d\'origine de la voiture : écrit dans un fichier SetupLab, chargé au stand, puis affiné.' }
+    end
   elseif kind ~= 'race' and not start.ready then
     step = 1
     title, text, color = 'Étape 1/4 · Charger le départ', 'Au stand, menu de setup ouvert : bouton vert « Charger » (onglet '
