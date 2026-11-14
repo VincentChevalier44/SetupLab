@@ -10,6 +10,8 @@ The app is in **English by default**, with a full **French** translation (one cl
 
 📖 **Interactive user guide: [vincentchevalier44.github.io/SetupLab](https://vincentchevalier44.github.io/SetupLab/)** (updated with each version; [French version](https://vincentchevalier44.github.io/SetupLab/?lang=fr)). The guide is also in the app archive: `docs/notice.html`, French `docs/notice.fr.html`.
 
+❤️ **Support the project: [Patreon WHK Racing](https://www.patreon.com/cw/WHKRacing)**. SetupLab is free and will stay free for everyone. I build it in my spare time; if you enjoy it and want to give a little help, you can support it from 1 € a month (cancel at any time).
+
 ---
 
 ## Contents
@@ -21,6 +23,7 @@ The app is in **English by default**, with a full **French** translation (one cl
 - [Beta status and known limitations](#beta-status-and-known-limitations)
 - [Development](#development)
 - [Project structure](#project-structure)
+- [Support](#support)
 - [Licence](#licence)
 
 ## Features
@@ -188,6 +191,10 @@ assets/              banner of the README and the releases
 update.txt           latest published version, read by the in-game update
 .github/             issue template
 ```
+
+## Support
+
+SetupLab is free and will stay free for everyone. It is built in my spare time, with a lot of testing on many cars and tracks. If it helps you on track and you want to support its development, you can do so on [Patreon WHK Racing](https://www.patreon.com/cw/WHKRacing), from 1 € a month, cancel at any time. Thank you!
 
 ## Licence
 
