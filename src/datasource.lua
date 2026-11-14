@@ -700,7 +700,8 @@ function M.readSetup(host, ctx, setupIni, ratios)
       maxBytes = K.maxTextBytes, maxSections = K.maxIniSections, maxKeys = K.maxIniKeys, maxValueChars = K.maxValueChars,
     }, ctx.tick)
   else
-    s.textReason = okt and 'vide' or text
+    -- avis de wattu (Overtake, 10/11/2026) : ce que CSP a rendu est gardé pour le journal (texte vide, nombre, nil…)
+    s.textReason = okt and (type(text) == 'string' and 'vide' or ('type ' .. type(text))) or text
   end
 
   local oke, editable = call(get(ac, 'isSetupAvailableToEdit'))

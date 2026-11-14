@@ -37,9 +37,9 @@ CSP_GLOBALS = {'ac', 'physics', 'io', 'ui', 'vec2', 'vec3', 'rgbm', 'script', '_
 GLUE_NETWORK = {'web'}
 
 # Rôles (D5). Le noyau pur ne lit aucune API ; les modules d'E/S reçoivent l'hôte injecté.
-CORE = {'util', 'config', 'track_model', 'car_model', 'setup_space', 'laptime_sim', 'stint_sim', 'ers', 'ers_plan', 'explain',
+CORE = {'util', 'config', 'bridge_layout', 'track_model', 'car_model', 'setup_space', 'laptime_sim', 'stint_sim', 'ers', 'ers_plan', 'ers_map', 'explain',
         'optimizer', 'calibration', 'i18n', 'lang_en'}
-IO = {'caps', 'datasource', 'recorder', 'exporter', 'store', 'updater'}
+IO = {'caps', 'datasource', 'recorder', 'exporter', 'store', 'updater', 'companion'}
 UI = {'ui', 'skin', 'dash', 'window'}
 
 # Fonctions d'écriture : seulement là où le PDR les place. D8 amendé le 22/10/2026 (décision de Vincent) : Corbeille

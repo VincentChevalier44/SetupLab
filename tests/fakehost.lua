@@ -674,8 +674,14 @@ function F.new(opts)
       return trackFixture.id
     end,
     getTrackName = function() return trackFixture.name end,
-    hasTrackSpline = function() return not opts.noSpline end,
-    trackProgressToWorldCoordinate = function(p)
+    -- comme les fonctions FFI de CSP : nombre d'arguments fixe (journal du 13/11/2026, cinq nil passés depuis la 1.5.11)
+    hasTrackSpline = function(...)
+      if select('#', ...) ~= 0 then error('wrong number of arguments for function call') end
+      return not opts.noSpline
+    end,
+    trackProgressToWorldCoordinate = function(...)
+      if select('#', ...) ~= 1 then error('wrong number of arguments for function call') end
+      local p = ...
       local x, y, z = F.sampleTrack(track, p)
       return { x = x, y = y, z = z }
     end,

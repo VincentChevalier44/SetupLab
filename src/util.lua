@@ -85,10 +85,23 @@ local activeTask = nil
 function M.callHost(fn, ...)
   if fn == nil then return false, 'absent' end
   local co = activeTask
-  if co ~= nil and coroutine.running() == co and select('#', ...) <= 5 then
-    return coroutine.yield(HOST_CALL, fn, ...)
+  local n = select('#', ...)
+  if co ~= nil and coroutine.running() == co and n <= 5 then
+    return coroutine.yield(HOST_CALL, fn, n, ...)
   end
   return M.call(fn, ...)
+end
+
+-- Appel avec exactement n arguments (1.5.12, journal du 13/11/2026) : une fonction FFI de CSP à nombre d'arguments fixe
+-- refuse des nil en trop (« wrong number of arguments for function call » : ac.hasTrackSpline() appelée avec cinq nil
+-- depuis la 1.5.11, géométrie du circuit perdue).
+local function callCount(fn, n, a1, a2, a3, a4, a5)
+  if n == 0 then return M.call(fn) end
+  if n == 1 then return M.call(fn, a1) end
+  if n == 2 then return M.call(fn, a1, a2) end
+  if n == 3 then return M.call(fn, a1, a2, a3) end
+  if n == 4 then return M.call(fn, a1, a2, a3, a4) end
+  return M.call(fn, a1, a2, a3, a4, a5)
 end
 
 -- Liste renvoyée par CSP (résultat d'un appel : ok, liste) : une table, ou un objet indexable (cdata, userdata) selon la
@@ -240,9 +253,12 @@ end
 
 -- Numéro de version d'un nom de fichier du genre (« …_Qualif_v3… », « …_Qualif_Pluie_v3… » ; wet : mot de la
 -- pluie, « Pluie » par défaut), ou nil.
+-- Sans tenir compte de la casse, genre au début du nom compris (relecture du 14/11/2026 : un nom choisi « spa_quali » ou
+-- « Quali » garde son écriture, et ses versions doivent rester reconnues).
 function M.versionInName(name, genre, wet)
-  local s = tostring(name)
-  local v = s:match('_' .. genre .. '_v(%d+)[%._%-]') or s:match('_' .. genre .. '_' .. (wet or 'Pluie') .. '_v(%d+)[%._%-]')
+  local s = '_' .. tostring(name):lower()
+  genre, wet = tostring(genre):lower(), tostring(wet or 'Pluie'):lower()
+  local v = s:match('_' .. genre .. '_v(%d+)[%._%-]') or s:match('_' .. genre .. '_' .. wet .. '_v(%d+)[%._%-]')
   return v and tonumber(v) or nil
 end
 
@@ -719,10 +735,11 @@ function M.schedulerStep(s, clock, budget, quota)
     local resumedAt = clock and clock() or nil
     s.lastTick = resumedAt or 0
     activeTask = task.co
-    local ok, result, fn, a1, a2, a3, a4, a5 = coroutine.resume(task.co)
-    -- appels de CSP demandés par la tâche (M.callHost) : faits ici, sur le fil principal, puis la tâche reprend
+    local ok, result, fn, n, a1, a2, a3, a4, a5 = coroutine.resume(task.co)
+    -- appels de CSP demandés par la tâche (M.callHost) : faits ici, sur le fil principal, avec le nombre exact
+    -- d'arguments, puis la tâche reprend
     while ok and result == HOST_CALL and coroutine.status(task.co) == 'suspended' do
-      ok, result, fn, a1, a2, a3, a4, a5 = coroutine.resume(task.co, M.call(fn, a1, a2, a3, a4, a5))
+      ok, result, fn, n, a1, a2, a3, a4, a5 = coroutine.resume(task.co, callCount(fn, n, a1, a2, a3, a4, a5))
     end
     activeTask = nil
     if resumedAt then task.cpuMs = task.cpuMs + (clock() - resumedAt) * 1000 end

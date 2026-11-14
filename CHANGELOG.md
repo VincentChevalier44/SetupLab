@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.0.0-beta.2.0.0 — 2026-11-14 — beta 2.0.0: works with AdvancedIA and SpotterEnginer
+
+Why this update: SetupLab now works hand in hand with two companion apps by the same author, AdvancedIA (AI race director) and SpotterEnginer (spotter and race engineer). SetupLab stays fully independent: without them, nothing changes and nothing new is shown. From 1.5.4, click **Update** in the SetupLab window.
+
+With AdvancedIA 2.0.0 or newer installed and running (checked on the offline bench; not yet tried in game):
+
+- Laps driven under safety car, VSC, FCY, red flag, formation lap, yellow flag, a delta to respect or a penalty (slow-down, drive-through, black flag) count in AC's times only: they are left out of the calibration, race pace, fuel consumption and tyre wear. AdvancedIA judges each lap; SetupLab waits up to 1.5 s after the line for its verdict.
+- Race rules: mandatory stops and a maximum stint length cap the stint (and so the starting fuel); DRS disabled by the rules is not counted in the computations; with a mandatory tyre change, the pit stop preset gets the best allowed compound other than the fitted one.
+- Cars stopped, off the track or retired (according to AdvancedIA) no longer count as traffic.
+- When AdvancedIA costs more than 1.5 ms per frame, SetupLab's computing slice shrinks by the difference.
+- When AdvancedIA sees the same track state, the dry/wet switch happens at once instead of after the usual delay.
+- A setting "Use AdvancedIA's data" appears in the SETTINGS tab only when AdvancedIA is installed. A "Rules" line appears in the stint panel only when a rule applies.
+- SetupLab only reads AdvancedIA's shared data (shared structure and session key); it never writes into it. With the free CSP 0.2.11 (no shared structures), SetupLab works as before.
+
+For SpotterEnginer: SetupLab publishes a short read-only key (setup in the car, planned fuel and consumption, target hot pressures, refinement state, trial-lap verdicts), so the race engineer can announce a new version ready, whether a trial is better or worse, and start from SetupLab's fuel figure. Rewritten only when a value changes, never in replays or online pauses.
+
+Saving a setup: when CSP returns an empty copy of the current setup (the "Setup not saved: current setup unreadable" message reported on Overtake), the message now says what to do (click again in the pits with the setup menu open; otherwise send the J0 report with your CSP version), and the log records what CSP returned. Reproduced on the bench: it happens only when CSP returns an empty copy everywhere, not only during the discovery.
+
+Track geometry (fixed, found in the game log): since 1.5.11, the track's AI line was no longer read during the discovery (the log showed "ac.hasTrackSpline: wrong number of arguments"), so the track model waited for a recorded lap instead. CSP is now called with the exact number of arguments, and the AI line is read again at once.
+
+ERS map (hybrid cars): the QUALIFYING and RACE tabs now show the track map with SetupLab's deployment plan in colours (where to deploy, where the car's own program deploys, where to recover), the start and the direction of travel, and the recommended starting deployment program (MGU-K). The plan relies on the car's ERS files; cars whose ERS is run by their own script are not covered. Checked on the offline bench; not yet tried in game.
+
+Setup settings: a scan of the setup names of the installed cars found names SetupLab did not know. Car-specific names (such as ARB_F, SPRING_LF, DAMPER_BUMP_LF, BUMPSTOP_LF), third-element bump stops, MGU-K/MGU-H start settings, turbo, engine braking, steering assist and gear sets are now recognised: they are kept as they are, each with its reason, instead of "not recognised". They are never changed until their link to the physics is confirmed in game. Script-defined settings (CUSTOM_SCRIPT_ITEM) stay kept, as before.
+
+Workflow review (fixed):
+
+- Setup files whose gear sections are written as INTERNAL_GEAR_n / FINAL_RATIO (as CSP sometimes does) are now read back under the setting names: your hand changes to a gear ratio after a load are kept, and "Resume my reference" or the qualifying a race starts from are recognised correctly when only the gears differ.
+- When a computation is impossible for good with a car (car data unreadable, car model incomplete, no setting SetupLab can change), the step card now says so with the reason and one action (read the car again), instead of "Drive" and a new attempt every 10 s.
+- During a race, the version in the car can no longer be discarded (nothing is loaded during a race, and the whole race was then lost for the analysis): judge it at the finish.
+- A setup name you choose that already ends with the type in another case ("spa_quali") or is the type alone ("Quali") is written in the expected form, so its versions are recognised.
+- "Car's default setup" is only offered when CSP gives the default values (not with the free CSP 0.2.11, where it could only fail).
+
+Offline test bench: 487 tests (21 new).
+
 ## 1.0.0-beta.1.5.11 — 2026-11-12 — beta 1.5.11: physics model corrected, CSP 0.2.11 car data, smoother computing
 
 Why this update: a third complete review of the code. Several parts of the physics model did not follow Assetto Corsa closely enough (camber, ABS braking, drivetrain, rolling resistance, hybrids); with the free CSP 0.2.11 the car data could still not be read ([issue #2](https://github.com/VincentChevalier44/SetupLab/issues/2)); and a few smaller defects were found in the interface, the saved data and the lap recorder. From 1.5.4, click **Update** in the SetupLab window; from 1.5.2 or older, delete the old `SetupLab` folder first, then extract the archive (see the README).

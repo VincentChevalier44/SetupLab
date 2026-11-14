@@ -8,7 +8,7 @@ local M = {}
 M.appName = 'SetupLab'
 -- Première bêta publique (décision de Vincent du 22/10/2026 : « on la présentera comme la version bêta numéro
 -- un, v1.0 ») ; les versions 1.0.0 à 1.7.0 d'avant étaient internes (CHANGELOG.md).
-M.version = '1.0.0-beta.1.5.11'
+M.version = '1.0.0-beta.2.0.0'
 M.milestone = 'J0 à J8 (qualification, course, mesure, DRS, ERS, interface, persistance), chargement dans la voiture, affinage, pluie, '
   .. 'activation, mémoire du circuit, validation avant enregistrement, vos temps réels, vos retouches gardées'
 M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus récente est ignorée
@@ -22,7 +22,7 @@ M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus
 M.EDITABLE = { 'compoundChoice', 'fuelMarginPct', 'fuelQualiLaps', 'perfStab', 'drsTrafficPct',
   'driverMarginPct', 'optBudgetEvalsQ', 'optBudgetEvalsC', 'calibrationAuto', 'wetAidLevels', 'refineLaps',
   'refineInstantFirst', 'refineMinLaps', 'refineMinMinutes', 'updateCheck', 'language', 'overlayLocked', 'overlayMini',
-  'onlineActive' }
+  'onlineActive', 'companionUse' }
 
 -- Noms des fichiers de setup produits (§12.3) ; l'horodatage est ajouté au préfixe : heure locale de
 -- Windows (demande de Vincent du 21/10/2026), sinon UTC dit dans le nom. Décision de Vincent du 22/10/2026
@@ -55,11 +55,12 @@ M.effectGroups = {
   { key = 'tyres', label = 'Pneus', kinds = { pressure = true }, compound = true },
   { key = 'geometry', label = 'Géométrie', kinds = { camber = true, toe = true } },
   { key = 'suspension', label = 'Suspension', kinds = { arb = true, spring = true, heave = true, rod = true, damperSlow = true,
-    damperFast = true, heaveDamper = true, bumpStop = true, packer = true } },
+    damperFast = true, heaveDamper = true, bumpStop = true, packer = true, heaveStop = true } },
   { key = 'transmission', label = 'Transmission', kinds = { gear = true, final = true, diffPower = true, diffCoast = true,
-    diffPreload = true, awd = true } },
+    diffPreload = true, awd = true, gearset = true } },
   { key = 'brakes', label = 'Freins', kinds = { brakeBias = true, brakePower = true, brakeDuct = true } },
-  { key = 'engine', label = 'Moteur', kinds = { limiter = true, engineMap = true } },
+  { key = 'engine', label = 'Moteur', kinds = { limiter = true, engineMap = true, ers = true, turbo = true,
+    engineBrake = true } },
   { key = 'aids', label = 'Aides au pilotage', aids = true },
   { key = 'other', label = 'Autres réglages', other = true },
 }
@@ -116,6 +117,8 @@ M.settings = {
   -- mode en ligne (demande de Vincent du 03/11/2026 : « je pensais que ça fonctionnait exactement pareil que le mode
   -- hors ligne ») : coché par défaut, toutes les séances ; décoché : pause en ligne (règlement d'une ligue)
   { key = 'onlineActive', kind = 'boolean', default = true, label = 'Actif en ligne' },
+  -- AdvancedIA (1.5.12, demande de Vincent du 12/11/2026) : affiché seulement si AdvancedIA est installé
+  { key = 'companionUse', kind = 'boolean', default = true, label = 'Utiliser les données d\'AdvancedIA' },
   -- barre de l'overlay (demande de Vincent du 03/11/2026) : cadenas (position et taille figées), réduit à la barre
   { key = 'overlayLocked', kind = 'boolean', default = false, label = 'Overlay verrouillé (position et taille figées)' },
   { key = 'overlayMini', kind = 'boolean', default = false, label = 'Overlay réduit à sa barre' },
@@ -168,6 +171,10 @@ M.help = {
   refineMinMinutes = 'Durée minimum de roulage, en minutes, avec le setup actuellement dans la voiture avant une proposition '
     .. '(en piste, voiture en mouvement). 0 : pas de durée minimum. Les tours et la durée doivent être atteints tous les deux.',
   language = 'Langue de toute l\'application : menus, messages, aides et overlay.',
+  companionUse = 'Coché, avec AdvancedIA en marche : les tours sous voiture de sécurité, VSC, drapeau rouge, double jaune ou '
+    .. 'avec une pénalité ne comptent qu\'au chrono d\'AC ; les règles de course (arrêts obligatoires, relais maximal, '
+    .. 'changement de gomme, DRS) entrent dans les calculs ; les voitures arrêtées ne comptent plus comme trafic ; le '
+    .. 'calcul laisse de la place à AdvancedIA. Rien n\'est jamais écrit dans AdvancedIA. Décoché : SetupLab l\'ignore.',
   onlineActive = 'Coché (par défaut) : en ligne, SetupLab fonctionne exactement comme hors ligne, dans toutes les séances. '
     .. 'Comme hors ligne, un setup imposé par le serveur ne se charge pas, et un tour passé derrière ou à côté d\'une autre '
     .. 'voiture (aspiration, gêne) n\'est pas compté dans l\'analyse, mais reste dans vos temps d\'AC (en séance de course, '
@@ -564,6 +571,15 @@ M.K = {
   setupValueTol = 1e-6,
   refineViewsKept = 3,        -- versions de l'affinage dont le calcul est gardé pour l'affichage (pages Racing 26)
   refineClockGapMax = 1.0,    -- s : écart d'horloge au-delà duquel le temps de roulage n'est pas compté (pause, saut)
+  -- apps compagnes (1.5.12, src/companion.lua) : AdvancedIA lu, SetupLab.state publié pour SpotterEnginer
+  companionStale = 2.5,       -- s (temps réel) : battement d'AdvancedIA attendu au moins à ce rythme, sinon arrêté
+  companionReadPeriod = 0.5,  -- s (temps réel) : relecture de la clé AdvancedIA.session (écrite à 2 Hz au plus)
+  companionLapWait = 1.5,     -- s : verdict d'AdvancedIA attendu après le passage de ligne (publié 0,5 s après au plus)
+  companionCostFreeMs = 1.5,  -- ms : coût d'AdvancedIA par image laissé sans effet ; au-delà, retiré de la tranche de calcul
+  companionCostMaxMs = 50,    -- ms : coût publié au-delà : valeur ignorée (illisible)
+  companionMaxStops = 10,     -- arrêts obligatoires au plus (au-delà : valeur ignorée)
+  companionStateMax = 240,    -- octets : taille maximale de SetupLab.state (contrat v1)
+  companionStatePeriod = 1.0, -- s : SetupLab.state recomposé au plus à ce rythme (écrit seulement si une valeur change)
   raycastHeight = 2.0,        -- départ du rayon au-dessus de la voiture (m)
   raycastLength = 10.0,       -- longueur du rayon (m)
 
