@@ -533,7 +533,8 @@ function setLang(l,keep){const from=cur();if(from&&from.dataset.l===l&&!keep)ret
 $$('.lang button').forEach(b=>b.addEventListener('click',()=>setLang(b.dataset.set)));
 let pref=null;try{pref=localStorage.getItem('setuplab-guide-lang')}catch(e){}
 const h=location.hash.slice(1);
-const start=h.startsWith('en-')?'en':(pref==='fr'?'fr':'en');   // anglais par défaut ; le choix mémorisé l'emporte
+const q=new URLSearchParams(location.search).get('lang');      // ?lang=fr|en (anciens liens notice.fr.html / notice.html)
+const start=h.startsWith('en-')?'en':(q==='fr'||q==='en')?q:(pref==='fr'?'fr':'en');   // anglais par défaut ; le choix mémorisé l'emporte
 setLang(start,true);
 if(h){const id=start==='en'&&!h.startsWith('en-')?'en-'+h:h,t=document.getElementById(id);if(t)setTimeout(()=>t.scrollIntoView(),50)}
 addEventListener('keydown',e=>{const inp=$('.search input',cur());if(e.key==='/'&&document.activeElement!==inp&&!/input|textarea/i.test(document.activeElement.tagName)){e.preventDefault();inp.focus()}});
