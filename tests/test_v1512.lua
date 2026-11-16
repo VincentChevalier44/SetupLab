@@ -1,5 +1,5 @@
 -- Bêta 1.5.12 (demande de Vincent du 12/11/2026) : SetupLab reste indépendante, lit AdvancedIA quand il est installé et en
--- marche (pont v1, clé AdvancedIA.session), publie SetupLab.state pour SpotterEnginer. Sans eux, rien ne change.
+-- marche (pont v1, clé AdvancedIA.session), publie SetupLab.state pour SpotterEngineer. Sans eux, rien ne change.
 local T = require('t')
 local Fake = require('fakehost')
 local Util = require('src/util')

@@ -1669,7 +1669,7 @@ end
 
 -- ---------------------------------------------------------------------------------------------------------------------
 -- Apps compagnes (1.5.12, demande de Vincent du 12/11/2026) : AdvancedIA lu s'il est installé et en marche, SetupLab.state
--- publié pour SpotterEnginer. Sans elles, rien ne change. Fil principal seulement (src/companion.lua).
+-- publié pour SpotterEngineer. Sans elles, rien ne change. Fil principal seulement (src/companion.lua).
 app.Companion = require('src/companion')
 app.companion = app.Companion.new()
 app.companionTrial = { version = nil, laps = 0, tid = 0 }
@@ -1692,7 +1692,7 @@ function app.compoundShort(index)
   return nil
 end
 
--- Valeurs de SetupLab.state (contrat v1 avec SpotterEnginer) : setup en place reconnu par SetupLab, plan de course,
+-- Valeurs de SetupLab.state (contrat v1 avec SpotterEngineer) : setup en place reconnu par SetupLab, plan de course,
 -- pressions à chaud visées, état de l'affinage, verdict des tours d'essai.
 function app.companionState()
   local s = { kind = 'none', stamp = app.now, tv = '-', tch = '-', tid = app.companionTrial.tid,

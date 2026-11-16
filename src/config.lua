@@ -576,7 +576,7 @@ M.K = {
   setupValueTol = 1e-6,
   refineViewsKept = 3,        -- versions de l'affinage dont le calcul est gardé pour l'affichage (pages Racing 26)
   refineClockGapMax = 1.0,    -- s : écart d'horloge au-delà duquel le temps de roulage n'est pas compté (pause, saut)
-  -- apps compagnes (1.5.12, src/companion.lua) : AdvancedIA lu, SetupLab.state publié pour SpotterEnginer
+  -- apps compagnes (1.5.12, src/companion.lua) : AdvancedIA lu, SetupLab.state publié pour SpotterEngineer
   companionStale = 2.5,       -- s (temps réel) : battement d'AdvancedIA attendu au moins à ce rythme, sinon arrêté
   companionReadPeriod = 0.5,  -- s (temps réel) : relecture de la clé AdvancedIA.session (écrite à 2 Hz au plus)
   companionLapWait = 1.5,     -- s : verdict d'AdvancedIA attendu après le passage de ligne (publié 0,5 s après au plus)

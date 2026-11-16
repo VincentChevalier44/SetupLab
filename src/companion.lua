@@ -6,7 +6,7 @@
 --     fermeture, état du moteur, pluie, coût, voitures (filtre de trafic) ;
 --   clé ac.store « AdvancedIA.session » (AdvancedIA 1.63) : verdict du tour du joueur (neutralisation, drapeau, pénalité),
 --     règles de la séance (gommes, arrêts, DRS), coût par image, rythme des IA. Texte « v=1;clé=valeur;… ».
--- Publication (SpotterEnginer, contrat v1 convenu le 12/11/2026) : clé ac.store « SetupLab.state », 240 octets au plus,
+-- Publication (SpotterEngineer, contrat v1 convenu le 12/11/2026) : clé ac.store « SetupLab.state », 240 octets au plus,
 -- réécrite seulement quand une valeur change.
 -- Toutes les fonctions de ce module tournent sur le fil principal (update), jamais dans une tâche de l'ordonnanceur
 -- (leçon de l'issue n° 2 : CSP 0.2.11 refuse certains appels depuis une coroutine).
@@ -53,7 +53,7 @@ function M.detect(c, host)
   return c.installed
 end
 
--- Structures du pont : même constructeur qu'AdvancedIA et SpotterEnginer (mêmes types, mêmes clés).
+-- Structures du pont : même constructeur qu'AdvancedIA et SpotterEngineer (mêmes types, mêmes clés).
 local function item(S, f)
   local kind = f[2]
   if kind == 'bool' then return S.boolean() elseif kind == 'int' then return S.int32() elseif kind == 'uint' then return S.uint32()
@@ -279,8 +279,8 @@ function M.pitCompound(mounted, allowed, comparison, indices)
   return nil
 end
 
--- Texte de SetupLab.state (contrat v1 avec SpotterEnginer) : champs dans l'ordre convenu, -1 pour un nombre inconnu,
--- « - » pour un nom inconnu. s : table des valeurs (voir la colle). sess (demande de SpotterEnginer du 12/11/2026) :
+-- Texte de SetupLab.state (contrat v1 avec SpotterEngineer) : champs dans l'ordre convenu, -1 pour un nombre inconnu,
+-- « - » pour un nom inconnu. s : table des valeurs (voir la colle). sess (demande de SpotterEngineer du 12/11/2026) :
 -- sim.currentSessionIndex, la clé est donc réécrite à chaque nouvelle séance ; stamp : sim.time / 1000 arrondi.
 local function num(v, digits)
   if not Util.isFinite(v) then return '-1' end
