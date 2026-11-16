@@ -242,7 +242,8 @@ tests['TA01 vos temps : meilleur tour d\'AC affiché, tour propre à côté ; m�
   local stats = U.realLaps(app, fam, 'sec')
   T.near(U.realTime(stats, 'quali'), 86.374, 1e-9, 'votre meilleur : celui d\'AC')
   T.near(U.cleanBestApart(stats, 'quali'), 87.305, 1e-9, 'tour propre à côté')
-  T.near(U.realTime(stats, 'race'), 87.305, 1e-9, 'course : moyenne des tours analysés seulement')
+  -- 14/11/2026 (constat de Vincent) : course : tours de rythme de course, trafic compté par AC compris
+  T.near(U.realTime(stats, 'race'), (87.305 + 86.374) / 2, 1e-9, 'course : moyenne avec le tour en trafic')
   T.ok(U.realText(stats, 'quali'):find('propre', 1, true), U.realText(stats, 'quali'))
   -- nouvelle séance : votre meilleur repart de zéro, comme le chrono d'AC ; l'analyse garde ses tours
   R.newSession(app.recorder)
@@ -267,14 +268,17 @@ tests['TA01 vos temps : meilleur tour d\'AC affiché, tour propre à côté ; m�
   T.near(app.memory['essai|sec'].best, 86.374, 1e-9, 'un tour plus lent ne le remplace pas')
   frames(h, 1)
   T.ok(shown(h, '1:26.374'), 'votre vrai meilleur tour à l\'écran')
-  -- course : moyenne des tours analysés, jamais un tour rejeté
+  -- course (14/11/2026, constat de Vincent) : moyenne des tours de rythme de course, le tour en trafic compté par AC compris ;
+  -- jamais un tour au stand ni neutralisé
   app.memory['course|sec'] = { group = 'course', bucket = 'sec', file = 'SetupLab_Course_v1.ini', hash = 2, version = 1,
     gain = 1.3, time = 85.19, family = fam, locked = false }
   app.memoryLap(clean)
   app.memoryLap(busy)
   app.memoryLap({ family = fam, bucket = 'sec', valid = true, acValid = true, time = 88.305 })
-  T.near(app.memory['course|sec'].mean, 87.805, 1e-9)
-  T.eq(app.memory['course|sec'].laps, 2)
+  app.memoryLap({ family = fam, bucket = 'sec', valid = false, acValid = false, time = 140, reason = 'passage par la voie des stands' })
+  app.memoryLap({ family = fam, bucket = 'sec', valid = false, acValid = true, time = 120, reason = R.NEUTRAL_REASON })
+  T.near(app.memory['course|sec'].mean, (87.305 + 86.374 + 88.305) / 3, 1e-9)
+  T.eq(app.memory['course|sec'].laps, 3)
   -- gardé dans le stockage, relu au lancement suivant
   local key = app.storeKey('mem', d, 'essai', 'sec')
   if key then
@@ -469,6 +473,57 @@ tests['TA03 horloge revenue en arrière : contexte relu, échéances décalées'
     .. tostring(app.now) .. ')')
   T.ok(app.nextContextAt <= app.now + 1.0 + 1e-9, 'prochaine relecture proche')
   T.ok(app.setupWatch == nil or app.setupWatch.since <= app.now, 'setup surveillé : instant décalé')
+end
+
+tests['FU01 carburant de course : moyenne des 5 derniers tours de rythme de course (trafic compris), base commune des apps'] = function()
+  local h, app = ready({ session = 1, skin = true })
+  local K = require('src/config').K
+  local R = require('src/recorder')
+  local function lap(valid, acValid, reason, a, b)
+    return { valid = valid, acValid = acValid, reason = reason, time = 90, fuelStart = a, fuelEnd = b, bucket = 'sec' }
+  end
+  app.fuelSamples = nil
+  T.eq(app.fuelSampleMean(), nil, 'aucun tour : rien')
+  app.fuelSample(lap(true, true, nil, 20, 17.8))                         -- propre : 2,2 L
+  app.fuelSample(lap(false, true, R.TRAFFIC_REASON, 17.8, 15.4))         -- trafic compté par AC : 2,4 L
+  app.fuelSample(lap(false, false, 'passage par la voie des stands', 15.4, 13)) -- stand : ignoré
+  app.fuelSample(lap(false, true, R.NEUTRAL_REASON, 13, 12))             -- neutralisé : ignoré
+  app.fuelSample(lap(true, true, nil, 10, 30))                           -- plein au stand : ignoré
+  T.near(app.fuelSampleMean(), 2.3, 1e-9, 'moyenne propre + trafic')
+  for i = 1, 6 do app.fuelSample(lap(true, true, nil, 50, 50 - i)) end
+  T.eq(#app.fuelSamples.sec, K.raceFuelSamples, 'cinq derniers tours')
+  T.eq(app.fuelSampleMean('pluie'), nil, 'pluie : à part')
+  T.near(app.fuelSampleMean(), (2 + 3 + 4 + 5 + 6) / 5, 1e-9)
+  -- tour de rythme de course : valide, ou compté par AC et écarté pour trafic ou incident de pilotage
+  T.ok(R.raceLap(lap(true, true)))
+  T.ok(R.raceLap(lap(false, true, R.TRAFFIC_REASON)))
+  T.ok(R.raceLap(lap(false, true, 'blocage de roue')))
+  T.no(R.raceLap(lap(false, true, R.NEUTRAL_REASON)))
+  T.no(R.raceLap(lap(false, false, R.TRAFFIC_REASON)))
+  T.no(R.raceLap(nil))
+  T.eq(app.perf.errors, 0)
+end
+
+tests['GA02 CSP 0.2.11 sans liste de crans, fichier aux noms INTERNAL_GEAR : la boîte est relue (relecture du 15/11/2026)'] = function()
+  local Datasource = require('src/datasource')
+  local Util = require('src/util')
+  local function gears(opts)
+    local h = Fake.new({ car = require('fixtures/cars/lamborghini_huracan_gt3_evo2'), track = require('fixtures/tracks/monza'),
+      gearNames = opts.internal and 'internal' or nil })
+    local car = Datasource.readCar(h, 0, Util.syncContext())
+    h.ac.getSetupSpinners = function() return {} end
+    local spinners = assert(Datasource.readSpinners(h, nil, car.ini['setup.ini'], car.ratios))
+    local n, values = 0, {}
+    for _, sp in ipairs(spinners) do
+      if sp.name:match('^GEAR_%d+$') or sp.name == 'FINAL_GEAR_RATIO' then n, values[sp.name] = n + 1, sp.value end
+    end
+    return n, values
+  end
+  local plain, vPlain = gears({})
+  local internal, vInternal = gears({ internal = true })
+  T.ok(plain > 0, 'boîte relue (noms de setup.ini) : ' .. plain)
+  T.eq(internal, plain, 'boîte relue aussi sous les noms de CSP')
+  for name, value in pairs(vPlain) do T.eq(vInternal[name], value, name .. ' : même cran') end
 end
 
 return tests

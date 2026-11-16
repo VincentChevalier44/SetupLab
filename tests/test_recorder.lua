@@ -745,4 +745,159 @@ tests['R14 trafic à 20 images/s : durée réelle de la gêne'] = function()
   T.eq(laps[1].reason, Recorder.TRAFFIC_REASON)
 end
 
+-- Audit du 14/11/2026 : enregistreur piloté image par image (sans faux hôte complet).
+local function bareRecorder(lapCount, speed)
+  local car = { lapCount = lapCount, lapTimeMs = 0, previousLapTimeMs = 90000, splinePosition = 0.5, speedMs = speed,
+    isLapValid = true, isInPitlane = false, brakeBias = 0.6, fuel = 50, wheels = { [0] = {}, {}, {}, {} }, mass = 1300 }
+  local w = { car = car, rec = Recorder.new(), now = 100, laps = {}, sig = 'S1', fam = 'F1' }
+  w.host = { ac = { getCar = function(i) if i == 0 then return car end end } }
+  w.ctx = { trackLength = 5000, conditions = { bucket = 'sec' }, raceSession = true, carsCount = 1 }
+  function w.step()
+    w.now = w.now + 1 / 60
+    local l = Recorder.update(w.rec, w.host, w.now, function() return w.sig, w.fam end, w.ctx)
+    if l then w.laps[#w.laps + 1] = l end
+  end
+  function w.lap(seconds, hook)
+    for i = 1, seconds * 60 do
+      car.speedMs = 55
+      car.splinePosition, car.lapTimeMs = (i / (seconds * 60)) % 1, i / 60 * 1000
+      if hook then hook(i) end
+      w.step()
+    end
+    car.previousLapTimeMs, car.lapCount, car.lapTimeMs, car.splinePosition = math.floor(seconds * 1000 + 0.5),
+      car.lapCount + 1, 0, 0.0005
+    w.step()
+  end
+  return w
+end
+
+tests['RB01 répartition de freinage au volant : tour gardé dans vos temps et la course, jamais « setup modifié »'] = function()
+  local w = bareRecorder(0, 55)
+  for i = 1, 60 do w.car.splinePosition = 0.5 + i / 5400; w.step() end
+  w.car.lapCount, w.car.previousLapTimeMs = 1, 45000
+  w.step()
+  w.lap(90)
+  -- la répartition change au volant : la signature complète aussi (FRONT_BIAS), pas la famille
+  w.lap(91, function(i) if i == 2000 then w.sig, w.car.brakeBias = 'S1b', 0.61 end end)
+  w.lap(92)
+  for _ = 1, 60 do w.step() end
+  local biasLap
+  for _, l in ipairs(w.laps) do if math.abs(l.time - 91) < 1e-6 then biasLap = l end end
+  T.ok(biasLap ~= nil, 'tour de 91 s rendu')
+  -- séance de course (relecture du 15/11/2026) : tour de course gardé, marqué d'un incident, jamais tour propre
+  T.eq(biasLap.valid, true)
+  T.eq(biasLap.incident, 'répartition de freinage modifiée en roulant')
+  T.eq(biasLap.acValid, true, 'compté dans vos temps d\'AC')
+  T.ok(Recorder.raceLap(biasLap), 'compté pour la course')
+  T.near(w.rec.laps.family.F1.acBest, 91, 1e-9)
+end
+
+tests['RB02 premier tour de course après un réglage sur la grille : « départ arrêté », pas « setup modifié »'] = function()
+  local w = bareRecorder(5, 0)
+  w.car.splinePosition = 0.98
+  for _ = 1, 10 do w.step() end
+  w.car.lapCount, w.car.splinePosition = 0, 0.99
+  for _ = 1, 600 do w.step() end
+  w.sig, w.fam = 'S2', 'F2'
+  for _ = 1, 600 do w.step() end
+  w.lap(90)
+  for _ = 1, 120 do w.step() end
+  T.ok(#w.laps >= 1, 'tour rendu')
+  T.eq(w.laps[#w.laps].reason, 'départ arrêté')
+end
+
+tests['RB03 tour neutralisé par AdvancedIA (répartition touchée sous voiture de sécurité) : jamais rythme de course'] = function()
+  local w = bareRecorder(0, 55)
+  w.ctx.lapVerdict = function() return false end
+  for i = 1, 60 do w.car.splinePosition = 0.5 + i / 5400; w.step() end
+  w.car.lapCount, w.car.previousLapTimeMs = 1, 45000
+  w.step()
+  w.lap(90)
+  w.lap(120, function(i) if i == 2000 then w.sig, w.car.brakeBias = 'S1b', 0.61 end end)
+  w.lap(92)
+  for _ = 1, 120 do w.step() end
+  T.eq(w.rec.laps.family.F1.raceCount or 0, 0, 'aucun tour neutralisé dans la moyenne de course')
+end
+
+tests['RB04 essai : tour en trafic neutralisé par AdvancedIA : ni moyenne de course ni carburant'] = function()
+  local w = bareRecorder(0, 55)
+  w.ctx.raceSession, w.ctx.carsCount = false, 2
+  w.ctx.lapVerdict = function() return false end
+  local other = { splinePosition = 0, isConnected = true, isActive = true, isInPitlane = false }
+  w.host.ac.getCar = function(i) if i == 0 then return w.car elseif i == 1 then return other end end
+  for i = 1, 60 do w.car.splinePosition = 0.5 + i / 5400; other.splinePosition = w.car.splinePosition + 0.002; w.step() end
+  w.car.lapCount, w.car.previousLapTimeMs = 1, 45000
+  w.step()
+  w.lap(90)
+  w.lap(100, function() other.splinePosition = (w.car.splinePosition + 0.002) % 1 end)
+  for _ = 1, 120 do w.step() end
+  local f = w.rec.laps.family.F1
+  T.eq(f and f.raceCount or 0, 0)
+  for _, l in ipairs(w.laps) do if math.abs(l.time - 100) < 1e-6 then T.no(Recorder.raceLap(l)) end end
+end
+
+tests['RB05 affinage de la course en essai : trafic gardé pour la course, coupe invalidée par AC rejetée ; tour rapide : tours propres'] = function()
+  local w = bareRecorder(0, 55)
+  w.ctx.raceSession, w.ctx.raceRules, w.ctx.carsCount = false, true, 2
+  local other = { splinePosition = 0, isConnected = true, isActive = true, isInPitlane = false }
+  local near = false
+  w.host.ac.getCar = function(i) if i == 0 then return w.car elseif i == 1 then return other end end
+  local function follow() other.splinePosition = near and (w.car.splinePosition + 0.002) % 1 or (w.car.splinePosition + 0.5) % 1 end
+  for i = 1, 60 do w.car.splinePosition = 0.5 + i / 5400; follow(); w.step() end
+  w.car.lapCount, w.car.previousLapTimeMs = 1, 45000
+  w.step()
+  w.lap(90, follow)                                                     -- premier tour (couverture incomplète)
+  near = true
+  w.lap(91, follow)                                                     -- trafic : gardé pour la course
+  near = false
+  w.lap(92, function(i) follow(); w.car.isLapValid = not (i > 2000 and i < 2100) end) -- coupe : rejetée
+  w.car.isLapValid = true
+  w.lap(93, follow)
+  for _ = 1, 120 do w.step() end
+  local by = {}
+  for _, l in ipairs(w.laps) do by[math.floor(l.time + 0.5)] = l end
+  T.ok(by[91] and by[91].valid and by[91].traffic, 'tour en trafic gardé pour la course')
+  T.ok(by[92] and not by[92].valid, 'coupe invalidée par AC : rejetée (' .. tostring(by[92] and by[92].reason) .. ')')
+  T.no(Recorder.raceLap(by[92]))
+  local f = w.rec.laps.family.F1
+  local Ui = require('src/ui')
+  T.ok(by[93] and by[93].valid and not by[93].traffic, 'tour propre')
+  T.eq(Ui.lapCount(f, 'race'), 2, 'course : trafic + propre')
+  T.eq(Ui.lapCount(f, 'quali'), 1, 'tour rapide : tours propres seulement')
+  T.eq(f.sessionCount, 1)
+  T.eq(f.best, 93, 'meilleur tour propre jamais un tour en trafic')
+end
+
+tests['RB06 tour en trafic ET avec incident : compté une fois hors des tours propres (relecture du 15/11/2026)'] = function()
+  local laps = { family = {}, familyOrder = {}, best = {} }
+  local Ui = require('src/ui')
+  Recorder.keepFamily(laps, { family = 'F', bucket = 'sec', valid = true, acValid = true, time = 91, traffic = true,
+    incident = 'coupe de piste' })
+  Recorder.keepFamily(laps, { family = 'F', bucket = 'sec', valid = true, acValid = true, time = 93 })
+  local f = laps.family.F
+  T.eq(Ui.lapCount(f, 'quali'), 1, 'un tour propre')
+  T.eq(Ui.lapCount(f, 'race'), 2, 'deux tours de course')
+  T.near(f.cleanSum, 93, 1e-9)
+end
+
+tests['RB07 hors règles de la course : répartition touchée au volant, tour écarté de l\'analyse mais compté par AC'] = function()
+  local w = bareRecorder(0, 55)
+  w.ctx.raceSession = false
+  for i = 1, 60 do w.car.splinePosition = 0.5 + i / 5400; w.step() end
+  w.car.lapCount, w.car.previousLapTimeMs = 1, 45000
+  w.step()
+  w.lap(90)
+  w.lap(91, function(i) if i == 2000 then w.sig, w.car.brakeBias = 'S1b', 0.61 end end)
+  w.lap(92)
+  for _ = 1, 60 do w.step() end
+  local biasLap
+  for _, l in ipairs(w.laps) do if math.abs(l.time - 91) < 1e-6 then biasLap = l end end
+  T.eq(biasLap.reason, 'répartition de freinage modifiée en roulant')
+  T.eq(biasLap.acValid, true)
+  local f = w.rec.laps.family.F1
+  T.eq(f.raceCount, 2, 'compté pour une course future (rythme)')
+  T.eq(f.incident, 1, 'dans le détail des tours de course')
+  T.eq(require('src/ui').lapCount(f, 'quali'), 1, 'un seul tour propre')
+end
+
 return tests

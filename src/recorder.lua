@@ -206,12 +206,24 @@ function M.keepFamily(laps, lap)
   -- meilleur tour d'AC de la séance (09/11/2026, comme l'onglet d'informations du jeu) : tours propres et tours comptés par
   -- AC écartés de l'analyse ; remis à zéro à chaque nouvelle séance (M.newSession)
   if lap.acValid and (f.acBest == nil or lap.time < f.acBest) then f.acBest = lap.time end
+  -- rythme de course (constat de Vincent du 14/11/2026 : en essai, son tour de course en trafic ne comptait pas) : tours
+  -- valides, plus les tours comptés par AC écartés pour le trafic ou un incident de pilotage, comme en séance de course
+  -- marqué pour l'affichage (relecture du 15/11/2026 : « hors analyse » mais compté dans la moyenne de course)
+  lap.racePace = M.raceLap(lap) or nil
+  if lap.racePace then
+    f.raceCount, f.raceSum = (f.raceCount or 0) + 1, (f.raceSum or 0) + lap.time
+    -- détail des tours de course (relecture du 15/11/2026) : aussi ceux écartés hors des règles de la course
+    local traffic = lap.traffic or (not lap.valid and lap.reason == M.TRAFFIC_REASON)
+    if traffic then f.traffic = (f.traffic or 0) + 1 end
+    if lap.incident or (not lap.valid and not traffic) then f.incident = (f.incident or 0) + 1 end
+  end
   if not lap.valid then return end
   f.count, f.sum = f.count + 1, f.sum + lap.time
-  f.sessionCount = (f.sessionCount or 0) + 1
-  if lap.traffic then f.traffic = (f.traffic or 0) + 1 end
-  if lap.incident then f.incident = (f.incident or 0) + 1 end
+  -- tours propres de la séance seulement (relecture du 15/11/2026 : un tour de course en trafic n'est pas un tour propre)
+  if not (lap.traffic or lap.incident) then f.sessionCount = (f.sessionCount or 0) + 1 end
   if not (lap.traffic or lap.incident) then
+    -- tours propres comptés à part (relecture du 15/11/2026 : un tour en trafic ET avec incident était retiré deux fois)
+    f.clean, f.cleanSum = (f.clean or 0) + 1, (f.cleanSum or 0) + lap.time
     if f.best == nil or lap.time < f.best then f.best = lap.time end
     if f.sessionBest == nil or lap.time < f.sessionBest then f.sessionBest = lap.time end
   end
@@ -224,16 +236,28 @@ function M.newSession(rec)
 end
 
 -- Tour terminé, avant le temps officiel : copie, validité (hors temps), conditions moyennes.
-local function buildLap(rec, signatureEnd, context)
+local function buildLap(rec, signatureEnd, context, familyEnd)
   local s = rec.sums
   local lap = copyLap(rec, context.keepPositions)
   lap.signature, lap.family = rec.signatureStart, rec.familyStart
   lap.lapCount = rec.lapIndex
   local reason = rec.invalid
   if reason == nil and (rec.signatureStart == nil or signatureEnd == nil) then reason = 'setup illisible' end
-  if reason == nil and signatureEnd ~= rec.signatureStart then reason = 'setup modifié pendant le tour' end
+  -- premier tour d'une course (audit du 14/11/2026) : départ arrêté dit en premier (le setup lu au changement de séance,
+  -- avant un réglage sur la grille, n'est pas un setup « modifié pendant le tour »)
+  if reason == nil and rec.n > 0 and lap.v[1] < K.recorderMinStartSpeed then reason = 'départ arrêté' end
+  -- L1 : famille comparée (répartition de freinage au volant hors famille : jugée plus bas, à sa tolérance)
+  local changed = signatureEnd ~= rec.signatureStart
+  if familyEnd ~= nil and rec.familyStart ~= nil then changed = familyEnd ~= rec.familyStart end
+  if reason == nil and changed then reason = 'setup modifié pendant le tour' end
   if reason == nil and s.biasMax - s.biasMin > K.recorderBiasTolerance then
-    reason = 'répartition de freinage modifiée en roulant'
+    -- règles de la course (relecture du 15/11/2026) : répartition touchée au volant gardée comme incident (tour de course,
+    -- jamais tour propre), comme le trafic ; ailleurs, tour écarté de l'analyse
+    if context.raceRules or context.raceSession then
+      rec.raceIncident = rec.raceIncident or 'répartition de freinage modifiée en roulant'
+    else
+      reason = 'répartition de freinage modifiée en roulant'
+    end
   end
   if reason == nil and rec.n < K.recorderMinSamples then reason = 'trop peu d\'échantillons' end
   if reason == nil and lap.v[1] < K.recorderMinStartSpeed then reason = 'départ arrêté' end
@@ -246,7 +270,7 @@ local function buildLap(rec, signatureEnd, context)
   lap.acInvalid = rec.acInvalid
   -- temps d'AC : pas le temps d'un seul setup ni d'un tour entier (relecture du 09/11/2026 : vu quelle que soit la
   -- première raison retenue)
-  lap.acDisq = rec.acDisq or rec.signatureStart == nil or signatureEnd ~= rec.signatureStart or rec.n < K.recorderMinSamples
+  lap.acDisq = rec.acDisq or rec.signatureStart == nil or changed or rec.n < K.recorderMinSamples
     or gap * (context.trackLength or 0) > K.recorderMaxGapM or nil
   -- séance de course : tour en trafic, ou avec un incident de pilotage, gardé et marqué
   lap.traffic = rec.trafficLap == true or nil
@@ -312,6 +336,8 @@ local function resolvePending(rec, car, now)
     local clean = p.verdict(p.lap.lapCount)
     if clean == false then
       p.lap.reason = p.lap.reason or M.NEUTRAL_REASON
+      -- relecture du 15/11/2026 : neutralisé même quand une autre raison a été retenue d'abord (jamais de rythme de course)
+      p.lap.neutral = true
       p.verdict = nil
     elseif clean == true or now >= p.verdictBy or now < p.verdictFrom then
       p.verdict = nil
@@ -459,6 +485,15 @@ M.QUALITY_REASONS = { [M.NEUTRAL_REASON] = true, [M.TRAFFIC_REASON] = true, ['so
   ['répartition de freinage modifiée en roulant'] = true, ['mémoire pleine'] = true }
 for reason in pairs(M.RACE_INCIDENTS) do M.QUALITY_REASONS[reason] = true end
 
+-- Tour de rythme de course (14/11/2026) : valide, ou compté par AC et écarté de l'analyse pour le trafic ou un incident de
+-- pilotage (ce qu'une séance de course garde) ; jamais un tour neutralisé, au stand ou invalidé par AC.
+function M.raceLap(lap)
+  if lap == nil or lap.neutral then return false end
+  if lap.valid then return true end
+  return lap.acValid == true and (lap.reason == M.TRAFFIC_REASON or M.RACE_INCIDENTS[lap.reason] == true
+    or lap.reason == 'sortie de piste' or lap.reason == 'répartition de freinage modifiée en roulant')
+end
+
 -- Trafic (demande de Vincent du 03/11/2026 ; même règle en ligne et hors ligne, voitures de l'IA comprises, choisie par
 -- Vincent le même jour) : une autre voiture juste devant (aspiration, gêne) ou à côté
 -- fausse la mesure du tour, qui ne doit compter ni pour la calibration ni pour le minimum de tours propres. Distance le
@@ -490,7 +525,7 @@ local function traffic(rec, host, p, context)
   if near then rec.trafficTime = rec.trafficTime + (rec.sampleDt or 1 / K.recorderHz) end
   if rec.trafficTime >= K.trafficMaxTime then
     -- séance de course : le tour reste valide, marqué en trafic (analyse de la course seulement)
-    if context.raceSession then
+    if context.raceSession or context.raceRules then
       rec.trafficLap = true
       return nil
     end
@@ -527,7 +562,7 @@ function M.update(rec, host, now, signatureFn, context)
     if rec.state == 'enregistrement' and lapCount == previous + 1 then
       if rec.pending then finished = finalize(rec, nil, 'temps officiel non confirmé') end
       context.mass, context.cgHeight = num(car, 'mass'), num(car, 'cgHeight')
-      local lap = buildLap(rec, signature, context)
+      local lap = buildLap(rec, signature, context, family)
       -- références : chrono d'AC la frame d'avant et son maximum pendant le tour (pauses exclues),
       -- durée en temps de simulation (pauses comprises)
       local references = {}
@@ -581,7 +616,12 @@ function M.update(rec, host, now, signatureFn, context)
     elseif bool(car, 'isInPitlane') == true then
       rec.invalid = 'passage par la voie des stands'
     elseif (num(car, 'wheelsOutside') or 0) > K.maxWheelsOutside then
-      rec.invalid = 'sortie de piste'
+      -- affinage de la course hors séance de course : sortie de piste gardée comme incident, comme en course
+      if context.raceRules then
+        rec.raceIncident = rec.raceIncident or 'sortie de piste'
+      else
+        rec.invalid = 'sortie de piste'
+      end
     end
   end
   if context.paused then return finished end
@@ -597,7 +637,7 @@ function M.update(rec, host, now, signatureFn, context)
   -- pilotage marque le tour (le premier), une voiture replacée le rejette
   if rec.invalid == nil then
     local why = incident(rec, car, now)
-    if why and context.raceSession and M.RACE_INCIDENTS[why] then
+    if why and (context.raceSession or context.raceRules) and M.RACE_INCIDENTS[why] then
       rec.raceIncident = rec.raceIncident or why
     else
       rec.invalid = why

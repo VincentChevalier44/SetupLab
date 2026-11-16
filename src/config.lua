@@ -8,7 +8,7 @@ local M = {}
 M.appName = 'SetupLab'
 -- Première bêta publique (décision de Vincent du 22/10/2026 : « on la présentera comme la version bêta numéro
 -- un, v1.0 ») ; les versions 1.0.0 à 1.7.0 d'avant étaient internes (CHANGELOG.md).
-M.version = '1.0.0-beta.2.0.0'
+M.version = '1.0.0-beta.2.0.1'
 M.milestone = 'J0 à J8 (qualification, course, mesure, DRS, ERS, interface, persistance), chargement dans la voiture, affinage, pluie, '
   .. 'activation, mémoire du circuit, validation avant enregistrement, vos temps réels, vos retouches gardées'
 M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus récente est ignorée
@@ -476,6 +476,11 @@ M.K = {
   raceMaxLaps = 500,          -- borne des tours de course (données de séance non fiables, D11)
   raceMaxMinutes = 1440,      -- borne de la durée de course
   raceMaxFuelPerLap = 30,     -- borne de la consommation par tour (L)
+  -- carburant de course (constat de Vincent du 14/11/2026 : pas assez d'essence ; base commune des apps) : un tour de
+  -- réserve (grille avant la ligne, tour de formation, consommation qui varie) et des litres de sécurité en plus
+  raceFuelReserveLaps = 1,
+  raceFuelSafetyLiters = 2,
+  raceFuelSamples = 5,        -- consommation : moyenne des derniers tours de rythme de course (base commune des apps)
   raceWearKmPerLapDefault = 1,  -- km virtuels par km parcouru sans mesure (taux d'usure 100 %), à confirmer
   raceSlipstreamDrag = 0.15,  -- H6 : traînée réduite de 15 % dans l'aspiration (à 100 % d'aspiration)
   raceDirtyAirLift = 0.1,     -- H7 : appui réduit de 10 % dans l'air sale

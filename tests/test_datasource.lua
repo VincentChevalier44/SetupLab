@@ -210,12 +210,13 @@ tests['D08 setup : crans, contenu, comparaison d\'encodage'] = function()
   end
   T.ok(gear and #gear.items >= 10, 'items du couple final')
   T.eq(camber.displayMultiplier, 0.1, 'carrossage en dixièmes de degré')
-  -- Constat n° 3 : noms de boîte décalés entre crans et fichier -> réglages modifiables non vérifiés.
+  -- Constat n° 3 : noms de boîte de CSP dans le fichier (INTERNAL_GEAR_(n+1), FINAL_RATIO) : appariés (relecture du
+  -- 15/11/2026), la cohérence est établie
   local g = Datasource.readSetup(host('lamborghini_huracan_gt3_evo2', 'spa', { gearNames = 'internal' }), SYNC)
-  T.no(g.comparison.consistent, 'absents modifiables : cohérence non établie')
+  T.ok(g.comparison.consistent, 'boîte appariée sous les noms de CSP')
   T.eq(#g.comparison.mismatched, 0)
-  T.eq(#g.comparison.missingEditable, 7, '6 rapports + couple final')
-  T.ok(#g.comparison.fileOnly >= 7, 'INTERNAL_GEAR_n / FINAL_RATIO côté fichier')
+  T.eq(#g.comparison.missingEditable, 0, '6 rapports + couple final trouvés')
+  for _, name in ipairs(g.comparison.fileOnly) do T.no(name:match('^INTERNAL_GEAR_') or name == 'FINAL_RATIO', name) end
   local hro = host('lamborghini_huracan_gt3_evo2', 'spa', { gearNames = 'internal' })
   for _, sp in ipairs(hro.spinners) do
     if sp.items then sp.readOnly = true end

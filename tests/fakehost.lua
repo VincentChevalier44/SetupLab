@@ -468,8 +468,8 @@ end
 local function fileSection(h, name)
   if h.opts.gearNames ~= 'internal' then return name end
   if name == 'FINAL_GEAR_RATIO' then return 'FINAL_RATIO' end
-  local n = name:match('^GEAR_(%d+)$')
-  if n then return 'INTERNAL_GEAR_' .. n end
+  local n = tonumber(name:match('^GEAR_(%d+)$'))
+  if n then return 'INTERNAL_GEAR_' .. (n + 1) end
   return name
 end
 

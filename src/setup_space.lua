@@ -154,8 +154,10 @@ function M.classify(name)
   if name == 'FUEL' then
     return { kind = 'fuel', key = 'fuel', factor = 1, class = M.EXCLUDED, reason = 'fixé par la règle de carburant' }
   end
-  -- INTERNAL_GEAR_n / FINAL_RATIO : noms écrits par CSP dans les fichiers de setup (alias, voir ALIASES)
-  local gear = tonumber(name:match('^GEAR_(%d+)$') or name:match('^INTERNAL_GEAR_(%d+)$'))
+  -- INTERNAL_GEAR_n / FINAL_RATIO : noms écrits par CSP dans les fichiers de setup (alias, voir ALIASES) ; décalés d'un
+  -- cran (audit du 14/11/2026, vu sur plusieurs voitures : GEAR_1..6 de setup.ini = INTERNAL_GEAR_2..7 du fichier)
+  local internal = tonumber(name:match('^INTERNAL_GEAR_(%d+)$'))
+  local gear = tonumber(name:match('^GEAR_(%d+)$')) or (internal and internal >= 2 and internal - 1 or nil)
   if gear then return { kind = 'gear', key = 'gear' .. gear, gear = gear, factor = 1, class = M.LARGE } end
   if name == 'FINAL_GEAR_RATIO' or name == 'FINAL_RATIO' then
     return { kind = 'final', key = 'final', factor = 1, class = M.LARGE }
@@ -616,8 +618,9 @@ end
 local ALIASES = { FINAL_GEAR_RATIO = { 'FINAL_RATIO' } }
 local function candidates(name)
   local list = { name }
-  local gear = name:match('^GEAR_(%d+)$')
-  if gear then list[2] = 'INTERNAL_GEAR_' .. gear end
+  -- GEAR_n de setup.ini = INTERNAL_GEAR_(n+1) du fichier (première vitesse : INTERNAL_GEAR_2 ; audit du 14/11/2026)
+  local gear = tonumber(name:match('^GEAR_(%d+)$'))
+  if gear then list[2] = 'INTERNAL_GEAR_' .. (gear + 1) end
   for _, alias in ipairs(ALIASES[name] or {}) do list[#list + 1] = alias end
   return list
 end

@@ -172,9 +172,10 @@ end
 -- Temps de référence de vos tours : meilleur tour (tour rapide) ou moyenne (course), ou nil.
 local function versionLaps(app, e)
   local mine = realLaps(app, e.family, e.bucket)
-  if e.trialFamily and (mine == nil or (mine.count or 0) == 0) then
+  local function none(s) return (s.count or 0) == 0 and (s.raceCount or 0) == 0 end
+  if e.trialFamily and (mine == nil or none(mine)) then
     local trial = realLaps(app, e.trialFamily, e.bucket)
-    if trial and ((trial.count or 0) > 0 or mine == nil) then mine = trial end
+    if trial and (not none(trial) or mine == nil) then mine = trial end
   end
   return mine
 end
@@ -185,6 +186,8 @@ end
 local function realTime(stats, kind)
   if stats == nil then return nil end
   if kind ~= 'race' then return Util.isFinite(stats.acBest) and stats.acBest or nil end
+  -- tours de rythme de course (14/11/2026 : trafic et incidents comptés par AC compris, aussi en essai)
+  if (stats.raceCount or 0) > 0 then return stats.raceSum / stats.raceCount end
   if (stats.count or 0) == 0 then return nil end
   return stats.sum / stats.count
 end
@@ -211,10 +214,28 @@ local function raceEnd(app)
   return app.raceSession ~= nil and app.raceSession() == true and not raceRun(app)
 end
 
+-- Nombre de tours derrière votre temps (relecture du 15/11/2026) : course, ceux de la moyenne (tours de rythme de course) ;
+-- tour rapide, les tours valides.
+local function lapCount(stats, kind)
+  if stats == nil then return 0 end
+  if kind == 'race' then return (stats.raceCount or 0) > 0 and stats.raceCount or (stats.count or 0) end
+  -- tour rapide : tours propres (sans les tours de course en trafic ou avec incident)
+  return stats.clean or 0
+end
+M.lapCount = lapCount
+
+-- Tours analysés pour une version en préparation, selon l'affinage en cours (course : rythme de course ; tour rapide :
+-- tours propres) ; mêmes nombres partout (relecture du 15/11/2026).
+local function pendingLaps(app, pending)
+  local kind = (app.refine and app.refine.kind == 'race') and 'race' or 'quali'
+  return lapCount(realLaps(app, pending.originFamily, pending.bucket), kind)
+end
+M.pendingLaps = pendingLaps
+
 -- Tours de course analysés pour une version, trafic compris : « 12 tours de course analysés (dont 9 en trafic) ».
 local function raceLapsLine(app, e)
   local f = realLaps(app, e.originFamily, e.bucket)
-  local n, t, i = f and f.count or 0, f and f.traffic or 0, f and f.incident or 0
+  local n, t, i = lapCount(f, 'race'), f and f.traffic or 0, f and f.incident or 0
   local s = n > 1 and 's' or ''
   local parts = {}
   if t > 0 then parts[#parts + 1] = t .. ' en trafic' end
@@ -778,10 +799,12 @@ local function raceLines(host, r, palette)
   local race = r.race
   local ui = host.ui
   wrapped(host, 'Course : ' .. race.laps .. ' tours (' .. race.lapsSource .. ') ; relais de ' .. race.stintLaps .. ' tours'
-    .. (race.stops > 0 and (', ' .. race.stops .. ' arrêt(s) au stand (réservoir)') or ''),
+    .. (race.stops > 0 and (', ' .. race.stops .. ' arrêt(s) au stand (' .. (race.stopsBy or 'réservoir')
+      .. ')') or ''),
     palette[race.assumed and 'pending' or 'available'])
   ui.textWrapped('Carburant : ' .. Util.fmt(race.fuelFrom, 0) .. ' -> ' .. Util.fmt(race.fuelStart, 0) .. ' L ('
-    .. Util.fmt(race.fuelPerLap, 2) .. ' L/tour, source ' .. race.fuelSource .. ', marge ' .. Util.fmt(race.margin * 100, 0) .. ' %)')
+    .. Util.fmt(race.fuelPerLap, 2) .. ' L/tour, source ' .. race.fuelSource .. ', marge ' .. Util.fmt(race.margin * 100, 0) .. ' %'
+    .. (race.reserveLaps and (', réserve ' .. race.reserveLaps .. ' tour + ' .. Util.fmt(race.safetyLiters, 0) .. ' L') or '') .. ')')
   if race.fuelNote then wrapped(host, race.fuelNote, palette.pending) end
   -- règles de course d'AdvancedIA (1.5.12), seulement quand elles s'appliquent
   if race.rules then
@@ -1070,7 +1093,7 @@ local function realText(stats, kind)
   local t = realTime(stats, kind)
   if t == nil then return '—' end
   -- tour rapide : les tours propres de la séance (comme le meilleur tour affiché) ; course : ceux de l'analyse
-  local n = kind == 'race' and (stats.count or 0) or (stats.sessionCount or 0)
+  local n = kind == 'race' and ((stats.raceCount or 0) > 0 and stats.raceCount or (stats.count or 0)) or (stats.sessionCount or 0)
   local s = n > 1 and 's' or ''
   local apart = cleanBestApart(stats, kind)
   if apart == false then return M.lapTime(t) .. ' (AC · aucun tour propre)' end
@@ -1158,7 +1181,7 @@ function M.versionModel(app, r, e, kind, suffix)
       local diff = tBefore - tMine
       m.realGain = diff
       line = line .. ' ; gain réel ' .. gainText(diff) .. ' (prévu ' .. gainText(e.gain) .. ')'
-      if mine.count >= 2 and before.count >= 2 and math.abs(diff) > K.validateTolAbs then
+      if lapCount(mine, kind) >= 2 and lapCount(before, kind) >= 2 and math.abs(diff) > K.validateTolAbs then
         m.verdict = diff > 0 and 'faster' or 'slower'
       end
     end
@@ -1174,7 +1197,7 @@ function M.versionModel(app, r, e, kind, suffix)
   m.kept, m.total = kept, total
   local partial = kept < total and (' (' .. kept .. '/' .. total .. ' réglages)') or ''
   local base = app.fileBase and app.fileBase(kind, e.bucket) .. '_v' .. e.version or v
-  m.base, m.laps = base, mine and mine.count or 0
+  m.base, m.laps = base, lapCount(mine, kind)
   local acts = {}
   m.actions = acts
   local running = raceRun(app)
@@ -1246,11 +1269,12 @@ local function versionBlock(host, app, intents, r, e, palette, suffix, kind)
   if e.status == nil then
     -- en piste : provisoire, l'analyse continue jusqu'au retour au stand (décision de Vincent du 22/10/2026)
     local ready = e.ready ~= false
-    local analyzed = before and before.count or 0
+    local analyzed = lapCount(before, kind)
     stepsLine(host, palette, 2)
     wrapped(host, v .. (ready and ' prête : gain prévu ' or ' en préparation : gain prévu provisoire ') .. Util.fmt(e.gain, 3) .. ' s'
       .. (tBefore and (' ; objectif estimé ' .. M.lapTime(tBefore - e.gain) .. ' (votre ' .. M.lapTime(tBefore)
-        .. ' moins le gain prévu)') or ' ; roulez un tour propre pour un objectif sur vos temps'), palette.accent)
+        .. ' moins le gain prévu)') or (kind == 'race' and ' ; roulez un tour de course pour un objectif sur vos temps'
+          or ' ; roulez un tour propre pour un objectif sur vos temps')), palette.accent)
     if raceRun(app) or (raceIn(app) and not ready) then
       small(host, 'SetupLab continue d\'analyser vos tours de course (' .. raceLapsLine(app, e) .. ') ; elle vous sera proposée '
         .. 'à l\'arrivée, pour votre prochaine course. Rien n\'est chargé pendant la course.', palette.pending)
@@ -1282,7 +1306,8 @@ local function versionBlock(host, app, intents, r, e, palette, suffix, kind)
       small(host, '« Essayer ' .. v .. ' » la met dans la voiture (un clic, au stand).', palette.accent)
       if actionButton(host, app.ui, palette, acts.try.label, 'primary', false) then apply(intents, acts.try.intent) end
     elseif laps == 0 then
-      small(host, 'Roulez au moins un tour propre avec elle, puis validez-la.', palette.accent)
+      small(host, kind == 'race' and 'Roulez au moins un tour de course avec elle, puis validez-la.'
+        or 'Roulez au moins un tour propre avec elle, puis validez-la.', palette.accent)
     end
     effectsList(host, app, intents, e, palette, kind)
     if actionButton(host, app.ui, palette, acts.validate.label, nil, true) then apply(intents, acts.validate.intent) end
@@ -1322,8 +1347,10 @@ local function refineCard(host, app, intents, kind, palette)
   card(host, app.ui, palette[r.active and 'accent' or 'na'], function()
     colored(host, 'Affinage ' .. name .. (r.active and '' or ' (arrêté)') .. (r.version > (r.base or 0) and (' — v' .. r.version) or ''),
       palette[r.active and 'accent' or 'na'])
-    tip(host, 'Un calcul ' .. (app.settings.refineLaps > 1 and ('tous les ' .. app.settings.refineLaps .. ' tours propres')
-      or 'à chaque tour propre') .. ' ; chaque setup proposé est annoncé à l\'écran ; rien n\'est enregistré avant « Valider » ; '
+    local laps = kind == 'race' and ' tours de course' or ' tours propres'
+    tip(host, 'Un calcul ' .. (app.settings.refineLaps > 1 and ('tous les ' .. app.settings.refineLaps .. laps)
+      or (kind == 'race' and 'à chaque tour de course' or 'à chaque tour propre'))
+      .. ' ; chaque setup proposé est annoncé à l\'écran ; rien n\'est enregistré avant « Valider » ; '
       .. 'l\'essayer au stand (un clic), trier ses réglages, puis valider ; jusqu\'à l\'arrêt.')
     -- version en piste (si ce n'est pas la dernière) et dernière version : à valider, écarter ou figer, puis à
     -- charger (décisions de Vincent du 21/10/2026 : « on valide ou on ne valide pas à chaque étape »)
@@ -1345,12 +1372,15 @@ local function refineCard(host, app, intents, kind, palette)
         phase = 'Nouveau calcul dès la fin des tâches en cours.'
       elseif pending then
         phase = 'v' .. pending.version .. ' attend votre avis ; nouvelle analyse ' .. (app.settings.refineLaps > 1
-          and ('après ' .. app.settings.refineLaps .. ' tours propres (' .. r.laps .. ' / ' .. app.settings.refineLaps .. ').')
-          or 'au prochain tour propre.')
+          and ('après ' .. app.settings.refineLaps .. (kind == 'race' and ' tours de course (' or ' tours propres (') .. r.laps
+            .. ' / ' .. app.settings.refineLaps .. ').')
+          or (kind == 'race' and 'au prochain tour de course.' or 'au prochain tour propre.'))
       elseif app.settings.refineLaps > 1 then
-        phase = 'Tours propres : ' .. r.laps .. ' / ' .. app.settings.refineLaps .. ' avant le prochain calcul.'
+        phase = (kind == 'race' and 'Tours de course : ' or 'Tours propres : ') .. r.laps .. ' / ' .. app.settings.refineLaps
+          .. ' avant le prochain calcul.'
       else
-        phase = 'Nouveau calcul au prochain tour propre (données nouvelles).'
+        phase = kind == 'race' and 'Nouveau calcul au prochain tour de course (données nouvelles).'
+          or 'Nouveau calcul au prochain tour propre (données nouvelles).'
       end
       small(host, phase, palette.muted)
       if r.waiting then wrapped(host, r.waiting, palette.pending) end
@@ -1446,7 +1476,8 @@ local function computeArea(host, app, intents, kind, palette)
       nextInline(host, label)
       if ui.button(label) then intents.refineStart = kind end
       tip(host, 'Calcule tout de suite et annonce chaque setup amélioré (rien n\'est enregistré avant « Valider »), puis recalcule '
-        .. (app.settings.refineLaps > 0 and ('tous les ' .. app.settings.refineLaps .. ' tour(s) propre(s) avec le même setup')
+        .. (app.settings.refineLaps > 0 and ('tous les ' .. app.settings.refineLaps
+          .. (kind == 'race' and ' tour(s) de course avec le même setup' or ' tour(s) propre(s) avec le même setup'))
           or 'en continu (chaque tour roulé affine la calibration)') .. ', jusqu\'à l\'arrêt. Le chargement se fait au stand, '
         .. 'en un clic.')
     end
@@ -1486,7 +1517,8 @@ local function resultTiles(host, app, kind, q, r, palette)
   tiles(host, app.ui, {
     { label = kind == 'race' and 'Votre tour moyen' or 'Votre meilleur tour', value = mine and M.lapTime(mine) or '—',
       color = kind ~= 'race' and mine and palette.best or nil,
-      tip = (mine and ('Avec le setup actuel : ' .. realText(stats, kind) .. '.') or 'Roulez un tour propre avec ce setup.')
+      tip = (mine and ('Avec le setup actuel : ' .. realText(stats, kind) .. '.')
+        or (kind == 'race' and 'Roulez un tour de course avec ce setup.' or 'Roulez un tour propre avec ce setup.'))
         .. '\n' .. simulated },
     { label = 'Objectif estimé', value = mine and M.lapTime(mine - gain) or '—', color = palette.available,
       tip = 'Votre temps moins le gain prévu.\n' .. simulated },
@@ -1847,7 +1879,8 @@ local function kindSection(host, app, intents, kind, palette)
     local sim = d and d.simCurrent
     if kind == 'quali' and sim and sim.time then
       local model = M.modelState(app)
-      local mine = realTime(realLaps(app, d.family, app.wet and app.wet.state or 'sec'), kind)
+      local fam = (app.inCarFamily and app.inCarFamily()) or d.family
+      local mine = realTime(realLaps(app, fam, app.wet and app.wet.state or 'sec'), kind)
       tiles(host, app.ui, {
         { label = 'Votre meilleur tour', value = mine and M.lapTime(mine) or '—', color = mine and palette.best or nil,
           tip = (mine and 'Votre meilleur tour de la séance avec le setup actuel (chrono d\'AC).'
@@ -1915,7 +1948,7 @@ local function measureSection(host, app, intents, palette)
     calText, calColor = cr.usable and 'utilisable' or 'non utilisée', palette[cr.usable and 'available' or 'pending']
     calTip = cr.usable and 'Elle servira au prochain calcul de setup.' or tostring(cr.reason)
   end
-  local ownTime = d and realTime(realLaps(app, d.family, bucket), 'quali') or nil
+  local ownTime = d and realTime(realLaps(app, (app.inCarFamily and app.inCarFamily()) or d.family, bucket), 'quali') or nil
   tiles(host, app.ui, {
     { label = 'Dernier tour', value = last and M.lapTime(last.time) or '—',
       color = last and palette[last.valid and 'available' or 'pending'] or nil,
@@ -2208,8 +2241,7 @@ function M.autoLine(app)
         'accent'
     end
     if pending and pending.ready == false then
-      local f = realLaps(app, pending.originFamily, pending.bucket)
-      local n = f and f.count or 0
+      local n = pendingLaps(app, pending)
       return 'Actif : v' .. pending.version .. ' en préparation (' .. where .. ', ' .. n .. ' tour' .. (n > 1 and 's' or '')
         .. ' analysé' .. (n > 1 and 's' or '') .. ') — prête au retour au stand.', 'pending'
     end
@@ -2440,7 +2472,7 @@ function M.stepModel(app, selected)
       .. 'l\'affinage s\'arrête. Déverrouillable (onglet Mémoire).' }
   elseif trial then
     local v = 'v' .. trial.version
-    local f = realLaps(app, trial.family, trial.bucket)
+    local f = versionLaps(app, trial)
     local saved = app.saved and app.saved[kind]
     local fileThere = trial.trial ~= nil and app.written[trial.trial.file] == trial.trial.hash and saved ~= nil
       and saved.path == trial.trial.path
@@ -2453,7 +2485,7 @@ function M.stepModel(app, selected)
       step = 3
       title, text = 'Étape 3/4 · Essayer ' .. v, 'Fichier d\'essai écrit : au stand, menu de setup ouvert, bouton vert '
         .. '« Charger » (onglet ' .. tabName .. '), puis roulez.'
-    elseif f and f.count > 0 then
+    elseif lapCount(f, kind) > 0 then
       step = 4
       title, text = 'Étape 4/4 · Valider ' .. v, 'Elle vous convient : validez-la. Pour refuser un réglage précis : « Modifier… » '
         .. '(onglet ' .. tabName .. ').'
@@ -2461,7 +2493,8 @@ function M.stepModel(app, selected)
         verdict = 'valider' } }, style = 'primary' }
     else
       step = 3
-      title, text = 'Étape 3/4 · Essayer ' .. v, 'Roulez au moins un tour propre avec elle.'
+      title, text = 'Étape 3/4 · Essayer ' .. v,
+        kind == 'race' and 'Roulez au moins un tour de course avec elle.' or 'Roulez au moins un tour propre avec elle.'
     end
   elseif keptInCar then
     step, pendingLoad = 4, true
@@ -2520,7 +2553,8 @@ function M.stepModel(app, selected)
       .. 'l\'affinage repart d\'elle (étape 2).'
   else
     step = 2
-    title, text = 'Étape 2/4 · Rouler', tostring(r and r.waiting or 'Nouveau calcul au prochain tour propre.')
+    title, text = 'Étape 2/4 · Rouler', tostring(r and r.waiting
+      or (kind == 'race' and 'Nouveau calcul au prochain tour de course.' or 'Nouveau calcul au prochain tour propre.'))
     if inRace then title = 'Course · analyse de vos tours' end
     local last = app.recorder and app.recorder.laps and app.recorder.laps.last
     if last and last.valid == false and r and r.phase == 'tours' then
@@ -2976,7 +3010,8 @@ function M.overlay(host, app, intents)
     elseif tMine then
       colored(host, word .. realText(mine, kind) .. (e.fromMemory and '' or ' ; avant : aucun tour'), palette.text)
     else
-      colored(host, 'Un tour propre avec ' .. name .. ' : verdict sur vos temps.', palette.muted)
+      colored(host, (kind == 'race' and 'Un tour de course avec ' or 'Un tour propre avec ') .. name .. ' : verdict sur vos temps.',
+        palette.muted)
     end
   end
   if last and Util.isFinite(last.time) and last.time > 0 then
@@ -2984,8 +3019,12 @@ function M.overlay(host, app, intents)
     if not last.valid then
       text = text .. (last.acValid and ' : hors analyse (' or ' : non compté (') .. L.t(tostring(last.reason or 'non valide')) .. ')'
         .. (last.acValid and ' · compté au chrono d\'AC' or '')
-    elseif not (tMine and e and last.family == e.family) and r and r.active then
-      text = text .. ' : tour propre compté'
+        .. ((kind == 'race' and last.racePace) and ' · compté pour la course' or '')
+    -- un tour de course (trafic, incident) n'est compté que par l'affinage de la course (relecture du 15/11/2026)
+    elseif not (tMine and e and last.family == e.family) and r and r.active
+        and (r.kind == 'race' or not (last.traffic or last.incident)) then
+      local raceLap = r.kind == 'race'
+      text = text .. (raceLap and ' : tour de course compté' or ' : tour propre compté')
     elseif tMine and e and last.family == e.family then
       local delta = last.time - tMine
       text = text .. (math.abs(delta) < K.lapTimeEps and kind ~= 'race' and ' (votre meilleur)' or (' (' .. signedGain(delta) .. ')'))
@@ -3023,8 +3062,7 @@ function M.overlay(host, app, intents)
   if pending and pending ~= e then
     ui.separator()
     if pending.ready == false then
-      local f = realLaps(app, pending.originFamily, pending.bucket)
-      local n = f and f.count or 0
+      local n = pendingLaps(app, pending)
       colored(host, 'v' .. pending.version .. ' en préparation : ' .. gainText(pending.gain or 0) .. ' prévu (provisoire), '
         .. n .. ' tour' .. (n > 1 and 's' or '') .. ' analysé' .. (n > 1 and 's' or ''), palette.pending)
       small(host, raceIn(app) and 'Proposée à l\'arrivée, pour votre prochaine course.' or 'Prête à votre retour au stand.',

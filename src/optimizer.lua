@@ -1019,7 +1019,12 @@ end
 -- Durée : tour prévu = le plus court du meilleur tour mesuré et du tour simulé (facteurs calibrés).
 local function racePlan(p, lapTime, modelPerLap)
   local args, race = p.args, p.race
-  if finitePositive(race.lapTimeMeasured) and race.lapTimeMeasured < lapTime then lapTime = race.lapTimeMeasured end
+  -- relais maximal d'une règle (audit du 14/11/2026) : converti en tours avec le tour le plus lent des deux, pour ne
+  -- jamais dépasser la durée permise ; la durée de course, elle, avec le plus rapide (plus de tours, plus de carburant)
+  local ruleLap = lapTime
+  if finitePositive(race.lapTimeMeasured) then
+    if race.lapTimeMeasured < lapTime then lapTime = race.lapTimeMeasured else ruleLap = race.lapTimeMeasured end
+  end
   local laps, lapsSource, assumed = M.raceLaps(args.settings, race.sessions, lapTime)
   local csp = finitePositive(race.fuelPerLapCsp) and race.fuelPerLapCsp or nil
   local perLap, source = nil, nil
@@ -1037,24 +1042,34 @@ local function racePlan(p, lapTime, modelPerLap)
   local current = p.setup.fuel
   local need = perLap and perLap * (1 + margin) or 0
   -- règles de course d'AdvancedIA (1.5.12) : relais plafonné par les arrêts obligatoires et la durée maximale d'un relais
-  local cap, rules = M.ruleStintCap(laps, args.settings, lapTime)
+  local cap, rules = M.ruleStintCap(laps, args.settings, ruleLap)
   local stintLaps = cap
   local fuelDelta, fuelStart, note = nil, current, nil
+  -- réserve (14/11/2026, base commune des apps) : un tour et des litres de sécurité en plus du relais
+  local reserveLaps, safety = K.raceFuelReserveLaps, K.raceFuelSafetyLiters
+  local free = laps -- relais permis par le carburant seul (raison des arrêts, relecture du 15/11/2026)
+  local function stintFrom(liters)
+    free = Util.clamp(floor((liters - safety) / need) - reserveLaps, 1, laps)
+    return min(free, cap)
+  end
   if perLap == nil then
     note = 'consommation inconnue : carburant actuel conservé (rouler un tour pour la mesurer)'
   elseif var == nil then
-    if need > 0 then stintLaps = Util.clamp(floor(current / need), 1, cap) end
-    note = 'carburant non réglable dans le setup : ' .. Util.fmt(laps * need, 1) .. ' L nécessaires'
+    if need > 0 and current then stintLaps = stintFrom(current) end
+    note = 'carburant non réglable dans le setup : ' .. Util.fmt((laps + reserveLaps) * need + safety, 1) .. ' L nécessaires'
   else
     local tank = Space.physical(var, var.rangeHi)
-    if need > 0 and tank and tank > 0 then stintLaps = Util.clamp(floor(tank / need), 1, cap) end
-    local target = stintLaps * need
+    if need > 0 and tank and tank > 0 then stintLaps = stintFrom(tank) end
+    local target = (stintLaps + reserveLaps) * need + safety
     if source == 'modèle' and current and current > target then
       target = current
       note = 'consommation estimée par le modèle : carburant jamais réduit sous l\'actuel (§0.6)'
     end
     fuelDelta, fuelStart = M.fuelDelta(args.space, target)
   end
+  -- raison des arrêts : la règle quand elle en impose plus que le carburant seul
+  local stopsBy = 'réservoir'
+  if rules and max(rules.stops or 0, math.ceil(laps / stintLaps) - 1) > math.ceil(laps / free) - 1 then stopsBy = 'règle' end
   -- usure : km virtuels par tour mesurés (setup de référence), sinon longueur × taux d'usure (à confirmer)
   local kmF, kmR, kmSource = race.kmPerLapF, race.kmPerLapR, 'mesure'
   if not (Util.isFinite(kmF) and Util.isFinite(kmR) and kmF >= 0 and kmR >= 0) then
@@ -1069,9 +1084,12 @@ local function racePlan(p, lapTime, modelPerLap)
     dirtyAirLift = K.raceDirtyAirLift, drs = p.drs,
   })
   local info = {
-    laps = laps, lapsSource = lapsSource, assumed = assumed, stintLaps = stintLaps, stops = math.ceil(laps / stintLaps) - 1,
+    laps = laps, lapsSource = lapsSource, assumed = assumed, stintLaps = stintLaps,
+    stops = min(laps - 1, max(rules and rules.stops or 0, math.ceil(laps / stintLaps) - 1)),
+    stopsBy = stopsBy,
     lapTime = lapTime, fuelStart = fuelStart, fuelDelta = fuelDelta, fuelPerLap = perLap, fuelSource = source or 'inconnue',
-    fuelNote = note, margin = margin, kmPerLapF = kmF, kmPerLapR = kmR, kmSource = kmSource,
+    fuelNote = note, margin = margin, reserveLaps = reserveLaps, safetyLiters = safety,
+    kmPerLapF = kmF, kmPerLapR = kmR, kmSource = kmSource,
     trafficFraction = plan.trafficFraction, slipstream = slip, tyreTemp = 'plateau de la courbe de performance (A19)',
     drs = p.drs, rules = rules,
   }

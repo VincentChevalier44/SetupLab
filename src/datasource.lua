@@ -595,6 +595,15 @@ function M.compareSetup(spinners, file, tick)
     if tick and i % 32 == 0 then tick() end
     named[sp.name] = true
     local value = Util.parseNumber(Util.iniGet(file, sp.name, 'VALUE'))
+    -- boîte sous les noms de CSP (relecture du 15/11/2026) : GEAR_n = INTERNAL_GEAR_(n+1), FINAL_GEAR_RATIO = FINAL_RATIO
+    if value == nil and type(sp.name) == 'string' then
+      local g = tonumber(sp.name:match('^GEAR_(%d+)$'))
+      local alt = (g and ('INTERNAL_GEAR_' .. (g + 1))) or (sp.name == 'FINAL_GEAR_RATIO' and 'FINAL_RATIO') or nil
+      if alt then
+        value = Util.parseNumber(Util.iniGet(file, alt, 'VALUE'))
+        if value ~= nil then named[alt] = true end
+      end
+    end
     if value == nil then
       r.missing[#r.missing + 1] = sp.name
       if sp.visible ~= false and sp.readOnly ~= true then r.missingEditable[#r.missingEditable + 1] = sp.name end
@@ -628,6 +637,12 @@ function M.spinnersFromSetupIni(host, setupIni, tick, ratios)
     if #out >= K.maxSetupSpinners then break end
     local sec = setupIni.sections[name]
     local value = Util.parseNumber(Util.iniGet(file, name, 'VALUE'))
+    -- boîte sous les noms de CSP (relecture du 15/11/2026) : GEAR_n = INTERNAL_GEAR_(n+1), FINAL_GEAR_RATIO = FINAL_RATIO
+    if value == nil and type(name) == 'string' then
+      local g = tonumber(name:match('^GEAR_(%d+)$'))
+      local alt = (g and ('INTERNAL_GEAR_' .. (g + 1))) or (name == 'FINAL_GEAR_RATIO' and 'FINAL_RATIO') or nil
+      if alt then value = Util.parseNumber(Util.iniGet(file, alt, 'VALUE')) end
+    end
     local lo, hi, step = Util.parseNumber(sec.MIN), Util.parseNumber(sec.MAX), Util.parseNumber(sec.STEP) or 1
     local clicksMode = Util.parseNumber(sec.SHOW_CLICKS) or 0
     local label = Util.truncate(tostring(sec.NAME or name), TM.label)

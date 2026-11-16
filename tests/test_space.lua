@@ -227,12 +227,18 @@ tests['P06 rendu du fichier : seuls les VALUE modifiés, contrôles de grille'] 
   T.ok(#bad == 2, 'deux roues hors plage')
   local _, notOpt = Space.values(r.space, { springF = 1 })
   T.contains(notOpt[1], 'non optimisable')
-  -- CSP qui écrit INTERNAL_GEAR_n / FINAL_RATIO : la boîte est écrite sous ces noms
+  -- CSP qui écrit INTERNAL_GEAR_n / FINAL_RATIO : la boîte est écrite sous ces noms, décalés d'un cran (audit du
+  -- 14/11/2026 : GEAR_3 = INTERNAL_GEAR_4 ; la première vitesse est INTERNAL_GEAR_2)
   local internal = load('lamborghini_huracan_gt3_evo2', { gearNames = 'internal' })
   local v2 = Space.values(internal.space, { gear3 = 1, final = 1 })
   local t2 = assert(Space.render(internal.setup.text, v2))
   local p2 = Util.parseIni(t2)
-  T.eq(tonumber(Util.iniGet(p2, 'INTERNAL_GEAR_3', 'VALUE')), v2.GEAR_3)
+  T.eq(tonumber(Util.iniGet(p2, 'INTERNAL_GEAR_4', 'VALUE')), v2.GEAR_3)
+  local v1 = Space.values(internal.space, { gear1 = 1 })
+  local p1 = Util.parseIni(assert(Space.render(internal.setup.text, v1)))
+  T.eq(tonumber(Util.iniGet(p1, 'INTERNAL_GEAR_2', 'VALUE')), v1.GEAR_1, 'première vitesse : INTERNAL_GEAR_2')
+  T.eq(Space.classify('INTERNAL_GEAR_2').gear, 1)
+  T.eq(Space.classify('INTERNAL_GEAR_7').gear, 6)
   T.eq(tonumber(Util.iniGet(p2, 'FINAL_RATIO', 'VALUE')), v2.FINAL_GEAR_RATIO)
   -- section introuvable : refus explicite, jamais d'oubli silencieux
   local missing, why = Space.render('[CAR]\nMODEL=x\n', { GEAR_1 = 2 })

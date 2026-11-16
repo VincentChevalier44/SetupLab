@@ -661,6 +661,10 @@ tests['GA01 fichier aux noms INTERNAL_GEAR_n / FINAL_RATIO : valeurs relues sous
   end
   T.ok(seen >= 2, 'rapports vus : ' .. seen)
   T.eq(v.INTERNAL_GEAR_2, nil, 'alias rangé sous le nom du cran')
+  -- décalage d'un cran (audit du 14/11/2026) : aucune vitesse en trop
+  local top = 0
+  for _, sp in ipairs(spinners) do local n = tonumber(sp.name:match('^GEAR_(%d+)$')); if n and n > top then top = n end end
+  T.eq(v['GEAR_' .. (top + 1)], nil, 'pas de GEAR_' .. (top + 1))
   T.eq(v.FINAL_RATIO, nil)
 end
 

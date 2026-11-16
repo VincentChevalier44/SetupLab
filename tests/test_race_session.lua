@@ -192,10 +192,11 @@ function()
   -- saisi pendant la course : gardé jusqu'à la séance suivante (pas remplacé par celui de la séance à la découverte)
   app.handleIntents({ raceLaps = 20 })
   T.eq(app.raceLaps, 20)
-  -- course au temps : tours estimés d'après la durée et le tour simulé
+  -- course au temps : tours estimés d'après la durée et le tour simulé, + 1 comme une durée réglée (relecture du
+  -- 15/11/2026)
   local h2, app2 = ready({ timed = true, laps = 0, minutes = 20 })
   local lap = app2.discovery.simCurrent.time
-  T.eq(app2.raceLaps, math.ceil(20 * 60 / lap), 'course au temps : estimée')
+  T.eq(app2.raceLaps, math.ceil(20 * 60 / lap) + 1, 'course au temps : estimée')
   -- séance d'essai : la règle du 26/10 reste (qualification de SetupLab d'abord)
   local h3, app3 = ready({ session = 1 })
   local _, action3 = app3.raceBlocker()

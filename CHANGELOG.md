@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.0-beta.2.0.1 — 2026-11-16 — beta 2.0.1: race fuel, your race times, gearbox files
+
+Why this update: in game, a race setup planned too little fuel, the track memory showed a simulated time instead of the driver's own race laps, and a full review found that gear settings were written under the wrong section names in setup files. From 1.5.4, click **Update** in the SetupLab window.
+
+Race fuel and stint:
+
+- Race fuel now uses the same basis as the other apps by the same author: (race laps + 1 reserve lap) × consumption + 2 L of safety fuel; the fuel margin setting (3 % by default) is added to the starting fuel only. Consumption is the mean of your last 5 race-pace laps (dry and wet apart), never below CSP's figure; pit laps, refuelling and laps neutralised by AdvancedIA are left out. Before, the plan used laps × the consumption of your best lap + 3 %, which could run dry.
+- Timed race: the lap count uses your real lap time when you are faster than the simulation, plus one lap, as for a race set by duration.
+- AdvancedIA rules: the stop count is never below the mandatory stops and never above laps − 1; the maximum stint length is converted with the slower lap time, so the rule is never broken; the panel says whether the stops come from the rule or the tank.
+
+Your times:
+
+- Race memory and "your average lap": laps AC counts that were left out of the analysis for traffic or a driving incident now count for the race, also when the race setup is refined in a practice or qualifying session. During a race refinement, these laps count for the steps and the minimum too, as in a race session; a lap invalidated by AC (track cut) outside a race session is still left out.
+- Changing the brake bias on the wheel no longer voids the lap: it counts in AC's times, and for the race; it is never a clean lap for qualifying.
+- The first race lap after a setup change on the grid is reported as a standing start, not as "setup changed during the lap".
+- "Your best · current setup" follows the setup actually in the car after a change in AC's menu.
+- Qualifying lap counts use clean laps only; race texts say race laps, never "clean laps".
+
+Gearbox:
+
+- Setup files name gears INTERNAL_GEAR_2..7 for GEAR_1..6 of setup.ini. SetupLab used the same number on both sides: a change to a gear would have been written into the gear below it, and a first gear change refused the file. Fixed in writing, reading back, the setup comparison (gearbox no longer "to confirm") and the free CSP 0.2.11 mode.
+
+Offline test bench: 497 tests (10 new).
+
 ## 1.0.0-beta.2.0.0 — 2026-11-14 — beta 2.0.0: works with AdvancedIA and SpotterEnginer
 
 Why this update: SetupLab now works hand in hand with two companion apps by the same author, AdvancedIA (AI race director) and SpotterEnginer (spotter and race engineer). SetupLab stays fully independent: without them, nothing changes and nothing new is shown. From 1.5.4, click **Update** in the SetupLab window.

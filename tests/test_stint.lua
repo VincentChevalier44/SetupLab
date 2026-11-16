@@ -183,8 +183,12 @@ tests['L05 carburant de course : mesure, CSP, modèle ; réservoir, arrêts ; pr
   local r = run({ fuelPerLapMeasured = 3.1, fuelPerLapCsp = 2.9 }, { raceLaps = 10 })
   T.eq(r.race.fuelSource, 'mesure')
   T.near(r.race.fuelPerLap, 3.1, 1e-9)
-  T.ok(r.race.fuelStart >= 10 * 3.1 * 1.03 - 1e-9, 'carburant pour 10 tours + 3 % : ' .. r.race.fuelStart)
-  T.ok(r.race.fuelStart < 10 * 3.1 * 1.03 + 1.01, 'au cran près')
+  -- 14/11/2026 (base commune des apps) : un tour de réserve et 2 L de sécurité en plus des 10 tours + 3 %
+  local need = (10 + K.raceFuelReserveLaps) * 3.1 * 1.03 + K.raceFuelSafetyLiters
+  T.ok(r.race.fuelStart >= need - 1e-9, 'carburant pour 10 tours + 1 de réserve + 3 % + 2 L : ' .. r.race.fuelStart)
+  T.ok(r.race.fuelStart < need + 1.01, 'au cran près')
+  T.eq(r.race.reserveLaps, 1)
+  T.eq(r.race.safetyLiters, 2)
   r = run({ fuelPerLapMeasured = 2.5, fuelPerLapCsp = 2.9 }, { raceLaps = 10 })
   T.near(r.race.fuelPerLap, 2.9, 1e-9, 'jamais sous la consommation CSP')
   T.eq(r.race.fuelSource, 'CSP (plancher)')
@@ -203,7 +207,7 @@ tests['L05 carburant de course : mesure, CSP, modèle ; réservoir, arrêts ; pr
   -- course plus longue que le réservoir : relais limité, arrêts annoncés
   r = run({ fuelPerLapCsp = 3 }, { raceLaps = 60 })
   local tank = Space.physical(w.space.byKey.fuel, w.space.byKey.fuel.rangeHi)
-  T.eq(r.race.stintLaps, math.floor(tank / (3 * 1.03)))
+  T.eq(r.race.stintLaps, math.floor((tank - K.raceFuelSafetyLiters) / (3 * 1.03)) - K.raceFuelReserveLaps)
   T.eq(r.race.stops, math.ceil(60 / r.race.stintLaps) - 1)
   T.ok(r.race.fuelStart <= tank + 1e-9)
   -- le taux de consommation de la session multiplie la consommation du modèle
@@ -224,7 +228,8 @@ tests['L06 cran FUEL absent : relais limité par le carburant actuel'] = functio
   local p = prepareRace(wNoFuel, 30, { fuelPerLapCsp = 3, kmPerLapF = 5.8, kmPerLapR = 5.8 }, { raceLaps = 30 })
   local r = assert(Optimizer.runRace(p, SYNC, Optimizer.newState({ budget = 30 })))
   local current = Space.apply(w.space, CarModel.defaultSetup(w.base), {}).fuel
-  T.eq(r.race.stintLaps, math.floor(current / (3 * 1.03)), 'relais limité par ' .. current .. ' L')
+  T.eq(r.race.stintLaps, math.floor((current - K.raceFuelSafetyLiters) / (3 * 1.03)) - K.raceFuelReserveLaps,
+    'relais limité par ' .. current .. ' L (réserve comprise)')
   T.ok(r.race.stops >= 1)
   T.contains(r.race.fuelNote, 'non réglable')
   T.eq(r.deltas.fuel, nil)
@@ -348,6 +353,28 @@ tests['L10 déséquilibre induit : l\'essieu qui s\'use le plus perd son adhére
     front.balanceLast, rear.balanceFirst, rear.balanceLast))
   T.ok(front.balanceLast < front.balanceFirst - 1e-3, 'avant usé : sous-virage croissant')
   T.ok(rear.balanceLast > rear.balanceFirst + 1e-3, 'arrière usé : survirage croissant')
+end
+
+tests['RU01 règles d\'AdvancedIA (audit du 14/11/2026) : arrêts jamais sous la règle ; relais maximal au tour le plus lent'] = function()
+  local w = world('lamborghini_huracan_gt3_evo2', 'monza')
+  local function run(race, patch)
+    for key, value in pairs(MEASURED) do if race[key] == nil then race[key] = value end end
+    local p = prepareRace(w, 30, race, patch)
+    return assert(Optimizer.runRace(p, SYNC, Optimizer.newState({ budget = 30 })))
+  end
+  for _, c in ipairs({ { 9, 3 }, { 16, 4 }, { 4, 2 } }) do
+    local r = run({ fuelPerLapCsp = 3 }, { raceLaps = c[1], ruleStops = c[2] })
+    T.ok(r.race.stops >= c[2], c[1] .. ' tours, ' .. c[2] .. ' arrêts obligatoires : ' .. r.race.stops)
+  end
+  -- jamais plus d'arrêts que de tours moins un (relecture du 15/11/2026)
+  local short = run({ fuelPerLapCsp = 3 }, { raceLaps = 2, ruleStops = 3 })
+  T.ok(short.race.stops <= 1, '2 tours : ' .. short.race.stops .. ' arrêt(s)')
+  T.eq(short.race.stopsBy, 'règle')
+  local long = run({ fuelPerLapCsp = 3 }, { raceLaps = 60, ruleStops = 1 })
+  T.eq(long.race.stopsBy, 'réservoir', 'arrêts dus au réservoir : ' .. long.race.stops)
+  -- relais de 20 min au plus : le tour mesuré, plus lent que le tour simulé, fixe le nombre de tours permis
+  local r = run({ fuelPerLapCsp = 3, lapTimeMeasured = 200 }, { raceLaps = 30, ruleMaxStintMin = 20 })
+  T.ok(r.race.stintLaps * 200 <= 20 * 60 + 1e-6, 'relais dans la règle au rythme mesuré : ' .. r.race.stintLaps .. ' tours')
 end
 
 return tests

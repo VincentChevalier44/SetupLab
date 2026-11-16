@@ -246,8 +246,16 @@ local function sessionRaceLaps(d)
   if not (s and s.type == K.sessionTypeRace) then return nil end
   if Util.isFinite(s.laps) and s.laps >= 1 and s.isTimedRace ~= true then return math.min(math.floor(s.laps), K.raceMaxLaps) end
   local lap = d.simCurrent and d.simCurrent.time
+  -- vos tours avec ce setup (audit du 14/11/2026) : le tour simulé non calibré est souvent plus lent que vous, donc trop
+  -- peu de tours et trop peu de carburant ; le plus rapide des deux est pris
+  local f = app.recorder and d.family and app.recorder.laps.family[Recorder.bestKey(d.family, app.wet and app.wet.state or 'sec')]
+  -- (relecture du 15/11/2026 : best nil en course, tous les tours en trafic ; acBest lu quand même)
+  for _, t in pairs({ best = f and f.best, ac = f and f.acBest }) do
+    if Util.isFinite(t) and t > 0 and (not Util.isFinite(lap) or t < lap) then lap = t end
+  end
   if Util.isFinite(s.durationMinutes) and s.durationMinutes > 0 and Util.isFinite(lap) and lap > 0 then
-    local n = math.ceil(s.durationMinutes * 60 / lap) + (s.hasAdditionalLap and 1 or 0)
+    -- + 1 comme M.raceLaps (relecture du 15/11/2026 : un tour de moins que la même course réglée en durée)
+    local n = math.ceil(s.durationMinutes * 60 / lap) + 1 + (s.hasAdditionalLap and 1 or 0)
     return math.max(1, math.min(n, K.raceMaxLaps))
   end
   return nil
@@ -1404,9 +1412,9 @@ local function recreditLap(lap, acCounted)
   local f = lap.family and app.recorder.laps.family[Recorder.bestKey(lap.family, lap.bucket)]
   if f == nil then return end
   if lap.acValid and acCounted then f.acBest = lap.time end
-  if lap.valid then
+  if lap.valid and not (lap.traffic or lap.incident) then
     f.sessionCount = 1
-    if not (lap.traffic or lap.incident) then f.sessionBest = lap.time end
+    f.sessionBest = lap.time
   end
 end
 
@@ -1459,7 +1467,7 @@ local function memoryLap(lap)
   for _, m in pairs(app.memory) do
     if m.family == lap.family and m.bucket == lap.bucket and m.problem == nil then
       if m.group == 'course' then
-        if lap.valid then
+        if Recorder.raceLap(lap) then
           local n = m.laps or 0
           m.mean, m.laps = ((m.mean or 0) * n + lap.time) / (n + 1), n + 1
           memoryPut(m)
@@ -1473,6 +1481,31 @@ local function memoryLap(lap)
 end
 app.memoryLap = memoryLap
 
+-- Consommation de course (constat de Vincent du 14/11/2026 : pas assez d'essence ; base commune des apps) : litres
+-- des derniers tours de rythme de course de ce lancement (voiture et circuit fixes), sans plein au stand.
+function app.fuelSample(lap)
+  if not Recorder.raceLap(lap) then return end
+  local a, b = lap.fuelStart, lap.fuelEnd
+  if not (Util.isFinite(a) and Util.isFinite(b) and a > b) then return end
+  -- par état de piste (audit du 14/11/2026 : des tours sous la pluie consomment moins)
+  local all = app.fuelSamples or {}
+  app.fuelSamples = all
+  local bucket = lap.bucket or 'sec'
+  local list = all[bucket] or {}
+  all[bucket] = list
+  list[#list + 1] = a - b
+  while #list > K.raceFuelSamples do table.remove(list, 1) end
+end
+
+-- Moyenne des derniers tours de rythme de course (L/tour) sur cet état de piste, ou nil.
+function app.fuelSampleMean(bucket)
+  local list = app.fuelSamples and app.fuelSamples[bucket or 'sec']
+  if list == nil or #list == 0 then return nil end
+  local sum = 0
+  for i = 1, #list do sum = sum + list[i] end
+  return sum / #list
+end
+
 local function onLap(lap)
   local raceOnly = lap.valid and (lap.traffic or lap.incident) and ('valide pour la course seulement ('
     .. tostring(lap.incident or 'trafic') .. ')') or nil
@@ -1480,6 +1513,7 @@ local function onLap(lap)
     ('rejeté (' .. tostring(lap.reason) .. ')' .. (lap.acValid and ' ; compté dans vos temps d\'AC' or ''))))
   acBestCheck(lap)
   memoryLap(lap)
+  app.fuelSample(lap)
   -- meilleur tour d'AC dans le nom des fichiers de qualification (renommés voiture arrêtée)
   if app.queueBestRename then app.queueBestRename(lap) end
   if not lap.valid then
@@ -1509,11 +1543,13 @@ local function onLap(lap)
       r.minFamily, r.minLaps, r.minTime = lap.family, 1, lap.time or 0
     end
     if r.phase == 'tours' and app.refineMinReached then
-      r.waiting = app.refineMinReached(r) and 'tour propre compté : calcul du setup en cours'
+      r.waiting = app.refineMinReached(r) and (r.kind == 'race' and 'tour de course compté : calcul du setup en cours'
+        or 'tour propre compté : calcul du setup en cours')
         or app.refineMinText(r)
       -- le message de la fenêtre suit (sinon « 0/1 tour propre » restait affiché après le tour)
       local what = (lap.incident and ('Tour de course compté, avec incident (' .. lap.incident .. ', '))
-        or (trafficLap and 'Tour de course compté, en trafic (') or 'Tour propre compté ('
+        or (trafficLap and 'Tour de course compté, en trafic (')
+        or (r.kind == 'race' and 'Tour de course compté (' or 'Tour propre compté (')
       app.ui.message = what .. Util.fmt(lap.time, 3) .. ' s) : ' .. r.waiting .. '.'
     end
     if r.phase == 'tours' then
@@ -1584,7 +1620,15 @@ local function recordFrame()
   -- trafic : autres voitures examinées en ligne comme hors ligne (IA comprise)
   rc.carsCount = app.context and app.context.carsCount or nil
   -- séance de course (choix de Vincent du 05/11/2026) : tours en trafic gardés pour la course, tour après l'arrivée rejeté
+  -- affinage de la course en essai ou en qualification (relecture du 15/11/2026, constat de Vincent du 14/11) : mêmes
+  -- règles qu'en séance de course, sinon ses tours en trafic ne comptaient ni pour l'étape, ni pour le minimum, ni pour
+  -- le calcul suivant, alors que ses temps de course les affichaient
+  -- séance de course : règles de la course (tour invalidé par AC gardé comme incident, tour après l'arrivée) ; affinage
+  -- de la course ailleurs : trafic et incidents de pilotage seulement (relecture du 15/11/2026 : une coupe invalidée par
+  -- AC en essai reste rejetée)
+  local r = app.refine
   rc.raceSession = raceSession()
+  rc.raceRules = rc.raceSession or (r ~= nil and r.active == true and r.kind == 'race')
   local lap = Recorder.update(app.recorder, host, app.now, liveSignature, rc)
   if lap then onLap(lap) end
 end
@@ -1686,7 +1730,7 @@ function app.companionState()
   local trial = app.companionTrial
   if e and e.status ~= 'validée' and e.status ~= 'écartée' then
     local m = Ui.versionModel(app, rr, e, kind, '')
-    local mine, before = m.mine and m.mine.count or 0, m.before and m.before.count or 0
+    local mine, before = Ui.lapCount(m.mine, kind), Ui.lapCount(m.before, kind)
     s.tlap = mine
     if Util.isFinite(m.realGain) then s.tdl = -m.realGain end
     if mine < 2 or before < 2 or not Util.isFinite(m.realGain) then
@@ -2036,6 +2080,9 @@ local function raceMeasures(d, bucket)
     local dk = lap.tyreKmDelta
     if dk and dk[1] and dk[2] and dk[3] and dk[4] then m.kmPerLapF, m.kmPerLapR = (dk[1] + dk[2]) / 2, (dk[3] + dk[4]) / 2 end
   end
+  -- consommation (14/11/2026, base commune des apps) : moyenne des derniers tours de rythme de course, quel que soit le setup
+  local mean = app.fuelSampleMean(bucket)
+  if mean then m.fuelPerLapMeasured = mean end
   return m
 end
 
@@ -2422,8 +2469,9 @@ local function setupValues(text)
   local out = {}
   for name, section in pairs(ini.sections) do
     if name ~= 'CAR' and name ~= '__EXT_PATCH' and section.VALUE ~= nil then
-      local gear = name:match('^INTERNAL_GEAR_(%d+)$')
-      local key = gear and ('GEAR_' .. gear) or (name == 'FINAL_RATIO' and 'FINAL_GEAR_RATIO') or name
+      -- INTERNAL_GEAR_(n+1) du fichier = GEAR_n (audit du 14/11/2026)
+      local gear = tonumber(name:match('^INTERNAL_GEAR_(%d+)$'))
+      local key = (gear and gear >= 2 and ('GEAR_' .. (gear - 1))) or (name == 'FINAL_RATIO' and 'FINAL_GEAR_RATIO') or name
       if key == name or ini.sections[key] == nil then out[key] = Util.parseNumber(section.VALUE) or section.VALUE end
     end
   end
@@ -3368,7 +3416,7 @@ app.carAtPit = carAtPit
 -- Tours propres analysés pour une version : vos tours avec le setup dont elle part, même état de piste.
 local function lapsAnalyzed(e)
   local f = e.originFamily and app.recorder.laps.family[Recorder.bestKey(e.originFamily, e.bucket)]
-  return f and f.count or 0
+  return Ui.lapCount(f, e.group == 'course' and 'race' or 'quali')
 end
 
 local function lapsText(n)
@@ -3379,7 +3427,7 @@ end
 -- Tours de course analysés (séance de course) : en trafic compris, et combien.
 local function raceLapsText(e)
   local f = e.originFamily and app.recorder.laps.family[Recorder.bestKey(e.originFamily, e.bucket)]
-  local n, t, i = f and f.count or 0, f and f.traffic or 0, f and f.incident or 0
+  local n, t, i = Ui.lapCount(f, 'race'), f and f.traffic or 0, f and f.incident or 0
   local s = n > 1 and 's' or ''
   local parts = {}
   if t > 0 then parts[#parts + 1] = t .. ' en trafic' end
@@ -3410,7 +3458,9 @@ local function refineAnnounce(r, e)
   if finish then e.finishNoticed = true end
   local n = lapsAnalyzed(e)
   local title = 'SetupLab : setup ' .. COMPUTE[r.kind].label .. ' v' .. e.version .. ' prêt'
-  local text = 'Gain prévu ' .. Util.fmt(e.gain, 2) .. ' s' .. (n > 0 and (', d\'après ' .. lapsText(n)) or '')
+  -- course : tours de course (trafic compris), jamais dits « propres » (relecture du 15/11/2026)
+  local lapsWords = r.kind == 'race' and raceLapsText(e) or lapsText(n)
+  local text = 'Gain prévu ' .. Util.fmt(e.gain, 2) .. ' s' .. (n > 0 and (', d\'après ' .. lapsWords) or '')
     .. '. Dans SetupLab, au stand : Essayer (la met dans la voiture), trier ses réglages et Valider ; ou Recommencer.'
   if raceSession() and raceOver() then
     -- arrivée (demande de Vincent du 05/11/2026) : le setup de cette course, pour la prochaine
@@ -3474,8 +3524,10 @@ end
 
 local function refineMinText(r)
   local laps, minutes = app.settings.refineMinLaps or 0, app.settings.refineMinMinutes or 0
+  -- course : tours de course (trafic compris), jamais dits « propres » (relecture du 15/11/2026)
+  local what = r.kind == 'race' and (' de course') or (' propre' .. (laps > 1 and 's' or ''))
   local text = 'minimum avant une proposition : ' .. math.min(r.minLaps or 0, laps) .. '/' .. laps .. ' tour'
-    .. (laps > 1 and 's' or '') .. ' propre' .. (laps > 1 and 's' or '')
+    .. (laps > 1 and 's' or '') .. what
   if minutes > 0 then
     text = text .. ' · ' .. Util.fmt(math.min((r.minTime or 0) / 60, minutes), 1) .. '/' .. Util.fmt(minutes, 0) .. ' min'
   end
@@ -3674,7 +3726,8 @@ local function refineCompute(r)
   if app.pendingComputes[r.kind] or (q and q ~= r.before and q.state == 'running') then return end
   r.phase, r.retry = 'tours', true
   r.due, r.nextAt = app.settings.refineLaps <= 0, app.now + K.refineRetryDelay
-  r.waiting = 'nouvel essai ' .. (r.due and ('dans ' .. K.refineRetryDelay .. ' s ou ') or '') .. 'au prochain tour propre : '
+  r.waiting = 'nouvel essai ' .. (r.due and ('dans ' .. K.refineRetryDelay .. ' s ou ') or '')
+    .. 'au prochain ' .. (r.kind == 'race' and 'tour de course' or 'tour propre') .. ' : '
     .. tostring(app.ui.message or 'calcul refusé')
 end
 
@@ -3690,7 +3743,8 @@ local function refineFinish(r, q)
     if q and q ~= r.before and q.state == 'cancelled' then why = 'calcul annulé' end
     r.retry = true
     r.due, r.nextAt = app.settings.refineLaps <= 0, app.now + K.refineRetryDelay
-    r.waiting = 'nouvel essai ' .. (r.due and ('dans ' .. K.refineRetryDelay .. ' s ou ') or '') .. 'au prochain tour propre : '
+    r.waiting = 'nouvel essai ' .. (r.due and ('dans ' .. K.refineRetryDelay .. ' s ou ') or '')
+    .. 'au prochain ' .. (r.kind == 'race' and 'tour de course' or 'tour propre') .. ' : '
       .. why
     return
   end
@@ -3733,7 +3787,7 @@ local function refineFinish(r, q)
       r.waiting = note.note
     elseif r.rejected[p.signature] then
       note.note = 'identique à une version non gardée : pas reproposée'
-      r.waiting = note.note .. ' ; nouveau calcul au prochain tour propre'
+      r.waiting = note.note .. ' ; nouveau calcul au prochain ' .. (r.kind == 'race' and 'tour de course' or 'tour propre')
     elseif known and not (pending and known == pending.version) then
       local e = refineEntry(r, known)
       note.note = 'identique à v' .. known .. (e and e.status and (' (' .. (e.status == 'écartée' and 'non gardée' or e.status)
@@ -3786,8 +3840,9 @@ local function refineFinish(r, q)
     .. Util.fmt(shown.gain, 3) .. ' s' .. (shown.ready and ' : l\'essayer, trier ses réglages et la valider, ou recommencer'
       or (raceIn() and ' (provisoire) : analyse de vos tours de course jusqu\'à l\'arrivée'
         or ' (provisoire) : analyse de vos tours jusqu\'au retour au stand'))) or note.note)
-    .. ' ; nouveau calcul ' .. (app.settings.refineLaps > 1 and ('après ' .. app.settings.refineLaps .. ' tours propres.')
-      or 'au prochain tour propre.')
+    .. ' ; nouveau calcul ' .. (app.settings.refineLaps > 1 and ('après ' .. app.settings.refineLaps
+      .. (r.kind == 'race' and ' tours de course.' or ' tours propres.'))
+      or (r.kind == 'race' and 'au prochain tour de course.' or 'au prochain tour propre.'))
   log('INFO', 'refine', app.ui.message)
 end
 
@@ -4002,8 +4057,9 @@ local function refineStart(kind)
   local d = app.discovery
   local f = d and d.family and app.recorder.laps.family[Recorder.bestKey(d.family, app.wet.state)]
   if f then
-    local n = kind == 'race' and f.count or (f.count - (f.traffic or 0) - (f.incident or 0))
-    r.minFamily, r.minLaps, r.minTime = d.family, math.max(0, n), f.sum
+    local n = Ui.lapCount(f, kind)
+    local sum = kind == 'race' and ((f.raceCount or 0) > 0 and f.raceSum or f.sum) or (f.cleanSum or 0)
+    r.minFamily, r.minLaps, r.minTime = d.family, n, sum
   end
   log('INFO', 'refine', 'Affinage ' .. COMPUTE[kind].label .. ' lancé')
   local why = kind == 'race' and raceBlocker() or nil
@@ -4019,7 +4075,9 @@ local function refineStart(kind)
   refineCompute(r)
   if app.refine.phase == 'calcul' then
     app.ui.message = 'Affinage ' .. COMPUTE[kind].label .. ' lancé : premier calcul, puis un nouveau '
-      .. (app.settings.refineLaps > 1 and ('tous les ' .. app.settings.refineLaps .. ' tours propres') or 'à chaque tour propre')
+      .. (app.settings.refineLaps > 1
+        and ('tous les ' .. app.settings.refineLaps .. (kind == 'race' and ' tours de course' or ' tours propres'))
+        or (kind == 'race' and 'à chaque tour de course' or 'à chaque tour propre'))
       .. ' ; chaque setup proposé est annoncé à l\'écran, rien n\'est enregistré avant « Valider ».'
   end
 end
@@ -4129,7 +4187,9 @@ local function refineValidate(r, e)
     entry.best, entry.mean, entry.laps = m.best, m.mean, m.laps
   else
     local f = e.family and app.recorder.laps.family[Recorder.bestKey(e.family, e.bucket)]
-    if f and e.group == 'course' and (f.count or 0) > 0 then
+    if f and e.group == 'course' and (f.raceCount or 0) > 0 then
+      entry.mean, entry.laps = f.raceSum / f.raceCount, f.raceCount
+    elseif f and e.group == 'course' and (f.count or 0) > 0 then
       entry.mean, entry.laps = f.sum / f.count, f.count
     elseif f and e.group ~= 'course' then
       entry.best = minTime(f.acBest, f.best)
