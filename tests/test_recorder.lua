@@ -900,4 +900,31 @@ tests['RB07 hors règles de la course : répartition touchée au volant, tour é
   T.eq(require('src/ui').lapCount(f, 'quali'), 1, 'un seul tour propre')
 end
 
+tests['RB08 répartition réglée par la voiture (va et vient à chaque freinage) : tours gardés (avis du 17/11/2026)'] = function()
+  local w = bareRecorder(0, 55)
+  w.ctx.raceSession = false
+  for i = 1, 60 do w.car.splinePosition = 0.5 + i / 5400; w.step() end
+  w.car.lapCount, w.car.previousLapTimeMs = 1, 45000
+  w.step()
+  -- script de la voiture : 0,60 en ligne droite, 0,63 au freinage, plusieurs fois par tour ; setup inchangé
+  local function auto(i) w.car.brakeBias = (math.floor(i / 600) % 2 == 1) and 0.63 or 0.60 end
+  w.lap(90, auto)
+  w.lap(91, auto)
+  -- un seul cran au volant (sans aller-retour) sur une autre voiture : toujours écarté
+  local w2 = bareRecorder(0, 55)
+  w2.ctx.raceSession = false
+  for i = 1, 60 do w2.car.splinePosition = 0.5 + i / 5400; w2.step() end
+  w2.car.lapCount, w2.car.previousLapTimeMs = 1, 45000
+  w2.step()
+  w2.lap(90, function(i) if i == 2000 then w2.car.brakeBias = 0.61 end end)
+  for _ = 1, 60 do w.step(); w2.step() end
+  T.eq(#w.laps >= 2, true, 'tours rendus')
+  for _, l in ipairs(w.laps) do
+    T.ok(l.reason ~= 'répartition de freinage modifiée en roulant', 'tour de ' .. l.time .. ' s gardé')
+  end
+  T.eq(w.laps[1].biasAuto, true, 'dit une fois')
+  T.eq(w.laps[2].biasAuto, nil)
+  T.eq(w2.laps[#w2.laps].reason, 'répartition de freinage modifiée en roulant')
+end
+
 return tests

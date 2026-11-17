@@ -530,8 +530,44 @@ function M.prepareQuali(args)
   return p
 end
 
+-- Boîte de vitesses (réponse de Vincent du 16/11/2026, « oui pour la 6e vitesse ») : la vitesse maxi du circuit est
+-- atteinte dans le dernier rapport, près du limiteur, avec une marge (aspiration en course). Dans la simulation, un pont
+-- trop long ne coûte presque rien et passe moins de rapports : la recherche finissait au bout long, vitesse maxi en 5e.
+-- Pénalité forte hors de la fenêtre (K.gearWindowSec par % d'écart), jamais un refus : la recherche garde toujours une
+-- solution, la plus proche, si les crans du pont sont trop espacés. Seulement quand la boîte est réglable.
+local function gearsTuned(p)
+  for _, var in ipairs(p.vars or {}) do
+    if var.kind == 'gear' or var.kind == 'final' then return true end
+  end
+  return false
+end
+
+-- Contrainte de la recherche (nil : boîte non réglable, pas de contrainte) : marge au limiteur du dernier rapport.
+function M.gearRef(p, eff, margin)
+  if not gearsTuned(p) then return nil end
+  local n = eff and eff.gearCount or 0
+  if n < 2 or not eff.gearVmax then return nil end
+  return { margin = margin }
+end
+
+-- Pénalité (s) sur la vitesse maxi v du tour simulé de ce setup (ERS compris ; course : air libre, sans DRS ni aspiration ;
+-- tour rapide : DRS compris s'il y en a un) : avant-dernier
+-- rapport assez long pour v (dernier rapport jamais utilisé), dernier rapport trop court pour v + marge (au limiteur, v
+-- est plafonnée : la pénalité pousse à rallonger), ou plus long que la fenêtre.
+function M.gearWindow(eff, ref, v)
+  if not (ref and eff and eff.gearVmax and Util.isFinite(v) and v > 0) then return 0 end
+  local n = eff.gearCount or 0
+  if n < 2 then return 0 end
+  local top, prev = eff.gearVmax[n], eff.gearVmax[n - 1]
+  if not (Util.isFinite(top) and Util.isFinite(prev)) then return 0 end
+  local lo = v * (1 + ref.margin)
+  local miss = max(0, prev / v - 1) + max(0, 1 - top / lo) + max(0, top / (lo * (1 + K.gearTopTol)) - 1)
+  return K.gearWindowSec * 100 * miss
+end
+
 -- Évalue le point x (écarts des variables optimisées) sur un circuit : J et résultat de la simulation.
 local function evaluateQuali(p, x, track, buf, factors, ctx)
+  p.gearPen = 0
   for i, var in ipairs(p.vars) do p.deltas[var.key] = x[i] end
   p.deltas.fuel = p.fuelDelta
   Space.apply(p.args.space, p.setup, p.deltas)
@@ -543,7 +579,9 @@ local function evaluateQuali(p, x, track, buf, factors, ctx)
   if eff.belowMinHeight then return math.huge, nil end
   local result = Sim.run(track, eff, buf, track == p.args.track and p.simOpts or p.simOptsCoarse)
   local balance, stability = Sim.penalties(result)
-  return result.time + p.weights.bal * balance + p.weights.stab * stability, result
+  -- p.gearPen : part de la boîte dans J (hors des gains affichés par réglage)
+  p.gearPen = M.gearWindow(eff, p.gearRef, result.vMax)
+  return result.time + p.weights.bal * balance + p.weights.stab * stability + p.gearPen, result
 end
 
 -- Bilan du DRS d'une qualification (§8.9) : temps actuels et proposés avec et sans DRS ; part du gain
@@ -772,8 +810,10 @@ function M.runQuali(p, ctx, state)
   -- Carburant : consommation mesurée par CSP si disponible, sinon celle du modèle au setup actuel
   -- (composé monté, facteurs de sa calibration s'il en a une).
   setFactors(p, factorsOf(p, p.currentSlot))
+  p.gearRef = nil
   local _, first = evaluateQuali(p, zero, args.track, p.buf, nil, ctx)
   if first == nil then return nil, 'setup actuel non simulable' end
+  p.gearRef = M.gearRef(p, p.eff, K.gearTopMarginQuali)
   -- la plus grande des deux consommations (CSP et modèle) : une mesure trop basse ou mal interprétée
   -- ne doit jamais réduire le carburant (§0.6)
   local perLap, perLapSource = first.fuel, 'modèle'
@@ -852,6 +892,7 @@ function M.runQuali(p, ctx, state)
   local cornersCurrent = Explain.cornerBalance(args.track, p.buf)
   p.setup.compound = p.compound.slot
   local Jp, proposed = evaluateQuali(p, chosen, args.track, p.buf, common, ctx)
+  local penChosen = p.gearPen or 0
   local proposedProfile = M.profile(args.track, p.buf)
   local cornersProposed = Explain.cornerBalance(args.track, p.buf)
   p.simOpts.recordBalance = nil
@@ -880,9 +921,10 @@ function M.runQuali(p, ctx, state)
       x[i] = 0
       local Jwithout, without = evaluateQuali(p, x, args.track, p.buf, common, ctx)
       local sens = state.sensitivity[i] or {}
+      -- gain affiché : sans la pénalité de boîte (pas un temps au tour)
       local change = {
         var = var, clicks = chosen[i], from = Space.physical(var, 0), to = Space.physical(var, chosen[i]),
-        contribution = Jwithout - Jp, atBound = sens.atBound == true,
+        contribution = (Jwithout - (p.gearPen or 0)) - (Jp - penChosen), atBound = sens.atBound == true,
       }
       change.explanation, change.explanationEn = Explain.change(change, { stats = stats, before = metrics(without, var),
         after = after })
@@ -1113,6 +1155,7 @@ function M.runRace(p, ctx, state)
   local eff = CarModel.configure(args.base, p.setup, p.conditions, ctx.tick, nil)
   if eff == nil then return nil, 'setup actuel non simulable' end
   local first = Sim.run(args.track, eff, p.buf, p.simOpts)
+  p.gearRef = M.gearRef(p, eff, K.gearTopMarginRace)
   local plan, info = racePlan(p, first.time, first.fuel)
   p.fuelDelta = info.fuelDelta
   -- ERS : plan de course (régime établi) du setup actuel au carburant de course, masque fixé pour le relais
@@ -1142,7 +1185,10 @@ function M.runRace(p, ctx, state)
   end
   local function stint(x, evaluator, extra)
     apply(x)
-    return StintSim.evaluate(evaluator, p.setup, extra)
+    local J, detail = StintSim.evaluate(evaluator, p.setup, extra)
+    -- tour du milieu en air libre : vitesse maxi sans DRS ni aspiration (la marge de course est pour elle)
+    p.gearPen = detail and J ~= math.huge and M.gearWindow(evaluator.eff, p.gearRef, detail.vMax) or 0
+    return J + p.gearPen, detail
   end
   -- Critère sur le relais exact (tous les tours) : temps moyen exact, plus les pénalités et le trafic de
   -- l'évaluation échantillonnée. Sert à choisir le composé et au contrôle final.
@@ -1211,7 +1257,8 @@ function M.runRace(p, ctx, state)
   end
   M.run(problem, ctx, state)
   -- Résultat sur relais exacts, setup actuel (composé monté) et proposé, avec les mêmes facteurs (ceux de
-  -- la comparaison des composés) ; contrôle final : jamais plus lent que l'actuel.
+  -- la comparaison des composés) ; contrôle final : jamais moins bon que l'actuel, pénalités comprises (tenue, trafic,
+  -- boîte : corriger une boîte mal étagée peut coûter quelques centièmes en air libre).
   state.phase = 'relais exacts'
   local chosen = state.chosen
   local Jc, stintCurrent = exactJ(zero, p.currentSlot, common)
@@ -1244,6 +1291,7 @@ function M.runRace(p, ctx, state)
   local cornersCurrent = Explain.cornerBalance(args.track, ev.buf)
   StintSim.setCompound(ev, p.compound.slot)
   local JpSampled = stint(chosen, ev)
+  local penChosen = p.gearPen
   local profileProposed = M.profile(args.track, ev.buf)
   local cornersProposed = Explain.cornerBalance(args.track, ev.buf)
   ev.simOpts.recordBalance = nil
@@ -1256,9 +1304,10 @@ function M.runRace(p, ctx, state)
       x[i] = 0
       local Jwithout = stint(x, ev)
       local sens = state.sensitivity[i] or {}
+      -- gain affiché : temps et pénalités de tenue, sans la pénalité de boîte (pas un temps au tour)
       local change = {
         var = var, clicks = chosen[i], from = Space.physical(var, 0), to = Space.physical(var, chosen[i]),
-        contribution = Jwithout - JpSampled, atBound = sens.atBound == true,
+        contribution = (Jwithout - p.gearPen) - (JpSampled - penChosen), atBound = sens.atBound == true,
       }
       change.explanation, change.explanationEn = Explain.change(change, { stats = raceStats })
       changes[#changes + 1] = change

@@ -297,14 +297,21 @@ function M.purge(store)
 end
 
 -- Écrit les entrées (CSP écrit sur disque quelques secondes plus tard). Renvoie vrai si écrit.
-function M.flush(store)
+-- Après un échec, nouvel essai 30 appels plus tard (environ 30 s) : jamais de sérialisation à chaque appel.
+function M.flush(store, force)
   if not (store.dirty and store.value) then return false end
+  if not force and (store.wait or 0) > 0 then
+    store.wait = store.wait - 1
+    return false
+  end
   local text = M.purge(store)
   local ok, why = call(function() store.value:set(text) end)
   if not ok then
-    store.reason = tostring(why)
+    store.reason, store.wait, store.failed = tostring(why), 30, true
     return false
   end
+  if store.failed then store.reason, store.failed = nil, nil end
+  store.wait = 0
   store.dirty = false
   return true
 end

@@ -110,7 +110,8 @@ local function startLap(rec, signature, lapCount, now, family)
     tyreIn = { 0, 0, 0, 0 }, tyreOut = { 0, 0, 0, 0 }, sideCount = 0, water = 0, waterCount = 0,
     loadSS = { 0, 0, 0, 0 }, loadDof = 0, roughV = 0, roughN = 0, roughWindows = 0,
     ersSamples = 0, ersKjMax = nil, ersChargeFirst = nil, ersChargeLast = nil,
-    kmFirst = {}, kmLast = {}, biasMin = math.huge, biasMax = -math.huge, boostMax = 0, fuelMissing = 0, drsOpen = 0 }
+    kmFirst = {}, kmLast = {}, biasMin = math.huge, biasMax = -math.huge, boostMax = 0, fuelMissing = 0, drsOpen = 0,
+    biasRef = nil, biasDir = 0, biasSwings = 0 }
 end
 
 -- Copie du tour terminé (tableaux exacts, sans la réserve du tampon) ; positions seulement si
@@ -250,7 +251,11 @@ local function buildLap(rec, signatureEnd, context, familyEnd)
   local changed = signatureEnd ~= rec.signatureStart
   if familyEnd ~= nil and rec.familyStart ~= nil then changed = familyEnd ~= rec.familyStart end
   if reason == nil and changed then reason = 'setup modifié pendant le tour' end
-  if reason == nil and s.biasMax - s.biasMin > K.recorderBiasTolerance then
+  if s.biasSwings >= K.recorderBiasAutoSwings and not rec.biasAuto then
+    rec.biasAuto = true
+    lap.biasAuto = true
+  end
+  if reason == nil and s.biasMax - s.biasMin > K.recorderBiasTolerance and not rec.biasAuto then
     -- règles de la course (relecture du 15/11/2026) : répartition touchée au volant gardée comme incident (tour de course,
     -- jamais tour propre), comme le trafic ; ailleurs, tour écarté de l'analyse
     if context.raceRules or context.raceSession then
@@ -696,6 +701,15 @@ function M.update(rec, host, now, signatureFn, context)
   local bias = num(car, 'brakeBias') or 0
   local boost = num(car, 'turboBoost') or 0
   s.biasMin, s.biasMax = min(s.biasMin, bias), max(s.biasMax, bias)
+  -- aller-retours de la répartition (au-delà de la tolérance) : une main au volant la change par crans dans un sens,
+  -- une voiture qui la règle elle-même la fait aller et venir
+  if s.biasRef == nil then
+    s.biasRef = bias
+  elseif abs(bias - s.biasRef) > K.recorderBiasTolerance then
+    local dir = bias > s.biasRef and 1 or -1
+    if s.biasDir ~= 0 and dir ~= s.biasDir then s.biasSwings = s.biasSwings + 1 end
+    s.biasDir, s.biasRef = dir, bias
+  end
   s.boostMax = max(s.boostMax, boost)
   local wheels = get(car, 'wheels')
   local win = rec.window

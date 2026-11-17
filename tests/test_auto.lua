@@ -256,7 +256,7 @@ tests['AU02 nom choisi : sans accent ni espace, genre ajouté, versions _v1 ; re
   frames(h, 1)
   h.click = 'Enregistrer le setup tour rapide'
   frames(h, 1)
-  T.ok(app.saved.quali.name:find((Config.fileDefaultName .. '_' .. Config.fileGenre.quali .. '_'), 1, true) == 1, app.saved.quali.name)
+  T.ok(app.saved.quali.name:find((Config.fileDefaultName .. '_' .. Config.fileWords.fr.quali .. '_'), 1, true) == 1, app.saved.quali.name)
   T.eq(Util.fileNameFrom('Été à Spa — œuvre', 40), 'Ete_a_Spa_uvre')
   T.eq(Util.fileNameFrom('../../x', 40), 'x')
   T.eq(app.perf.errors, 0)

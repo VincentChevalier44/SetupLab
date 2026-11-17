@@ -102,6 +102,8 @@ function M.writeNew(host, base, text)
   local okL, back = call(get(io, 'load'), path)
   if not okL or back ~= text then
     r.reason = 'relecture différente du contenu écrit'
+    -- fichier tronqué (disque plein, antivirus) : à la Corbeille, jamais laissé dans la liste des setups d'AC
+    if okL and type(back) == 'string' then call(get(io, 'recycle'), path) end
     return r
   end
   call(get(host.ac, 'refreshSetups'))

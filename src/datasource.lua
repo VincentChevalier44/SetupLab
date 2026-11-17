@@ -127,14 +127,16 @@ function M.describeRaw(sections, sectionName, maxKeys)
     if type(key) == 'string' then keys[#keys + 1] = key end
   end
   table.sort(keys)
+  -- format seulement (types), jamais les valeurs : le rapport se copie et se colle dans une issue publique, et les
+  -- données d'une voiture peuvent venir de son data.acd (relecture du 16/11/2026)
   for i = 1, min(#keys, maxKeys or 6) do
     local v = section[keys[i]]
-    local items = {}
     if type(v) == 'table' then
-      for j = 1, min(#v, 6) do items[#items + 1] = tostring(v[j]) end
+      local items = {}
+      for j = 1, min(#v, 6) do items[#items + 1] = type(v[j]) end
       lines[#lines + 1] = keys[i] .. ' : table[' .. #v .. '] ' .. table.concat(items, ' ¦ ')
     else
-      lines[#lines + 1] = keys[i] .. ' : ' .. type(v) .. ' ' .. tostring(v)
+      lines[#lines + 1] = keys[i] .. ' : ' .. type(v)
     end
   end
   return lines

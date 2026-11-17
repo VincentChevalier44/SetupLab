@@ -193,7 +193,7 @@ function M.step(c, host, wall)
       c.nextRead = wall + K.companionReadPeriod
       local okL, text = call(get(host.ac, 'load'), M.SESSION_KEY)
       if okL and type(text) == 'string' and text ~= c.sessionText then
-        c.sessionText = text
+        c.sessionText, c.lastReadText = text, text
         c.session = M.parseSession(text)
       elseif not (okL and type(text) == 'string') then
         c.sessionText, c.session = nil, nil
@@ -207,11 +207,34 @@ end
 
 function M.connected(c) return c ~= nil and c.state == 'connected' end
 
+-- Nouvelle séance d'AC, ou séance recommencée : le dernier tour jugé avant ne vaut plus, jusqu'à ce qu'AdvancedIA en juge
+-- un autre (son texte change aussi pour ses IA ; le dernier texte lu compte même si le pont était coupé au changement).
+function M.newSession(c)
+  if c == nil then return end
+  local s = c.session or (c.lastReadText and M.parseSession(c.lastReadText)) or nil
+  c.staleLap = s and s.lastLapId ~= nil and { id = s.lastLapId, clean = s.lastLapClean } or nil
+end
+
+-- SetupLab désactivé : un état « rien en cours » publié une fois (SpotterEngineer ne garde pas l'ancien).
+function M.publishIdle(c, host)
+  local last = c and c.publishedText
+  if last == nil or last:find(';kind=none;', 1, true) then return false end
+  return M.publish(c, host, M.stateText({ sess = tonumber(last:match(';sess=(%-?%d+)')),
+    tid = tonumber(last:match(';tid=(%-?%d+)')) }))
+end
+
 -- Verdict d'AdvancedIA sur un tour du joueur (numérotation de car.lapCount pendant ce tour) : true (propre), false
 -- (neutralisation, drapeau, pénalité), nil (inconnu : pas encore publié, ou AdvancedIA absent).
 function M.lapVerdict(c, lapId)
   if not M.connected(c) or c.session == nil or lapId == nil then return nil end
+  -- texte d'une séance précédente, pas encore réécrit par AdvancedIA : son dernier tour n'est pas celui-ci (relecture du
+  -- 16/11/2026 : tour 3 neutralisé aux essais, tour 3 de la séance suivante jugé neutralisé)
   local s = c.session
+  local stale = c.staleLap
+  if stale then
+    if s.lastLapId == stale.id and s.lastLapClean == stale.clean then return nil end
+    c.staleLap = nil
+  end
   if s.lastLapId == lapId and s.lastLapClean ~= nil then return s.lastLapClean, s.reason end
   return nil
 end

@@ -7,6 +7,7 @@ local TrackModel = require('src/track_model')
 local CarModel = require('src/car_model')
 local Space = require('src/setup_space')
 local Optimizer = require('src/optimizer')
+local Sim = require('src/laptime_sim')
 local StintSim = require('src/stint_sim')
 local Fake = require('fakehost')
 
@@ -375,6 +376,67 @@ tests['RU01 règles d\'AdvancedIA (audit du 14/11/2026) : arrêts jamais sous la
   -- relais de 20 min au plus : le tour mesuré, plus lent que le tour simulé, fixe le nombre de tours permis
   local r = run({ fuelPerLapCsp = 3, lapTimeMeasured = 200 }, { raceLaps = 30, ruleMaxStintMin = 20 })
   T.ok(r.race.stintLaps * 200 <= 20 * 60 + 1e-6, 'relais dans la règle au rythme mesuré : ' .. r.race.stintLaps .. ' tours')
+end
+
+-- 2.0.2 (réponse de Vincent du 16/11/2026, « oui pour la 6e vitesse ») : en course, la vitesse maxi du tour proposé est
+-- atteinte dans le dernier rapport (l'avant-dernier n'y suffit pas), avec la marge d'aspiration.
+local function gearUse(w, p, deltas)
+  Space.apply(w.space, p.setup, deltas)
+  p.setup.compound = p.currentSlot
+  p.conditions.factors = CarModel.defaultFactors()
+  local eff = assert(CarModel.configure(w.base, p.setup, p.conditions, SYNC.tick, nil))
+  local r = Sim.run(w.track, eff, Sim.new(w.track), { tick = SYNC.tick })
+  local n = eff.gearCount
+  return r.vMax, eff.gearVmax[n - 1], eff.gearVmax[n]
+end
+
+tests['GB01 boîte : vitesse maxi dans le dernier rapport (course et tour rapide), fenêtre ; sans boîte réglable, rien'] = function()
+  for _, carId in ipairs({ 'whk_dtm_2026', 'lamborghini_huracan_gt3_evo2' }) do
+    local w = world(carId, 'monza')
+    local p = prepareRace(w, 400, { fuelPerLapCsp = 3, kmPerLapF = 5.8, kmPerLapR = 5.8 }, { raceLaps = 10 })
+    local r = assert(Optimizer.runRace(p, SYNC, Optimizer.newState({ budget = 400 })))
+    PY.note('GB01', string.format('%s course : gain %.3f s/tour', carId, (r.timeCurrent or 0) - (r.timeProposed or 0)))
+    if p.gearRef then
+      local vMax, prev, top = gearUse(w, p, r.deltas)
+      PY.note('GB01', string.format('%s course : vitesse maxi %.1f km/h, avant-dernier %.1f, dernier %.1f',
+        carId, vMax * 3.6, prev * 3.6, top * 3.6))
+      T.ok(prev < vMax, carId .. ' : avant-dernier rapport insuffisant pour la vitesse maxi')
+      T.ok(top >= vMax * (1 + K.gearTopMarginRace) - 0.3, carId .. ' : marge pour l\'aspiration au dernier rapport')
+      T.ok(Optimizer.gearWindow({ gearCount = 2, gearVmax = { prev, top } }, p.gearRef, vMax) < 0.2, 'dans la fenêtre')
+      for _, c in ipairs(r.changes) do
+        if c.var.kind == 'gear' or c.var.kind == 'final' then
+          PY.note('GB01', string.format('%s : gain affiché %.3f s', c.var.key, c.contribution))
+          T.ok(math.abs(c.contribution) < 1, c.var.key .. ' : gain sans la pénalité de boîte (0,2 s par %)')
+        end
+      end
+    else
+      PY.note('GB01', carId .. ' : boîte non réglable, pas de contrainte')
+    end
+    -- tour rapide : même règle, marge de 1 %
+    local settings = Config.defaults()
+    local q = Optimizer.prepareQuali({ base = w.base, space = w.space, track = w.track, trackCoarse = w.coarse,
+      settings = settings, budget = 200, conditions = { airTemp = 24, roadGrip = 0.98, surfaceGrip = w.track.surfaceGrip } })
+    local rq = assert(Optimizer.runQuali(q, SYNC, Optimizer.newState({ budget = 200 })))
+    PY.note('GB01', string.format('%s tour rapide : gain %.3f s', carId, (rq.timeCurrent or 0) - (rq.timeProposed or 0)))
+    if q.gearRef then
+      local vMax, prev, top = gearUse(w, q, rq.deltas)
+      PY.note('GB01', string.format('%s tour rapide : vitesse maxi %.1f km/h, avant-dernier %.1f, dernier %.1f',
+        carId, vMax * 3.6, prev * 3.6, top * 3.6))
+      T.ok(prev < vMax, carId .. ' tour rapide : avant-dernier rapport ne suffit pas à la vitesse maxi')
+      T.ok(top >= vMax * (1 + K.gearTopMarginQuali) - 0.3, carId .. ' tour rapide : marge au limiteur')
+    end
+  end
+  -- fenêtre sur la vitesse maxi du setup lui-même : avant-dernier rapport assez long, dernier trop court (au
+  -- limiteur), trop long
+  local ref = { margin = 0.03 }
+  local function pen(prev, top, v) return Optimizer.gearWindow({ gearCount = 2, gearVmax = { prev, top } }, ref, v or 80) end
+  T.near(pen(70, 84), 0, 1e-9, 'dans la fenêtre')
+  T.ok(pen(81, 95) > 0.2, 'avant-dernier rapport suffisant : dernier rapport jamais utilisé')
+  T.ok(pen(70, 80, 80) > 0.4, 'au limiteur : pousse à rallonger')
+  T.ok(pen(70, 92) > 0.5, 'trop long')
+  T.eq(pen(70, 84, 0/0), 0, 'vitesse inconnue : rien')
+  T.eq(Optimizer.gearRef({ vars = {} }, { gearCount = 6, gearVmax = { 1, 2, 3, 4, 5, 6 } }, 0.03), nil,
+    'boîte non réglable : pas de contrainte')
 end
 
 return tests

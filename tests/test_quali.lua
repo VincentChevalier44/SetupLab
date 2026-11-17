@@ -166,7 +166,7 @@ tests['Q04 colle : profil du setup actuel, calcul, progression, enregistrement']
   h.click = 'Enregistrer le setup tour rapide'
   frames(h, 1)
   T.ok(app.quali.saved and app.quali.saved.ok, tostring(app.ui.message))
-  T.ok(app.quali.saved.path:find((Config.fileDefaultName .. '_' .. Config.fileGenre.quali .. '_'), 1, true), app.quali.saved.path)
+  T.ok(app.quali.saved.path:find((Config.fileDefaultName .. '_' .. Config.fileWords.fr.quali .. '_'), 1, true), app.quali.saved.path)
   T.eq(h.writeCalls, before + 1, 'une seule écriture : le nouveau fichier (D8)')
   local files = 0
   for _ in pairs(h.written) do files = files + 1 end
@@ -532,7 +532,7 @@ tests['Q14 recalculer et enregistrer autant de fois que voulu : heure locale, is
   local function files()
     local list = {}
     for path in pairs(h.written) do
-      if path:find((Config.fileDefaultName .. '_' .. Config.fileGenre.quali .. '_'), 1, true) then list[#list + 1] = path:match('[^/]+$') end
+      if path:find((Config.fileDefaultName .. '_' .. Config.fileWords.fr.quali .. '_'), 1, true) then list[#list + 1] = path:match('[^/]+$') end
     end
     table.sort(list)
     return list

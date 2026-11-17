@@ -275,8 +275,10 @@ local function withFont(host, name, fn)
   local fonts = Util.get(ui, 'Font')
   local pushed = false
   if type(fonts) == 'table' and fonts[name] ~= nil then pushed = Util.call(ui.pushFont, fonts[name]) end
-  fn()
+  -- police toujours rendue, même sur une erreur de fn (sinon tout le texte suivant reste dans cette police)
+  local ok, err = pcall(fn)
   if pushed then Util.call(ui.popFont) end
+  if not ok then error(err, 0) end
 end
 
 -- Texte coloré qui revient à la ligne (couleur du texte poussée) ; sans pushStyleColor : texte coloré.
@@ -1728,8 +1730,12 @@ local function nameRow(host, app, intents, kind, palette)
   if app.filesNote then small(host, app.filesNote, palette.muted) end
 end
 
--- Nombre de tours de la course prévue dans la séance (indication), ou nil.
+-- Nombre de tours de la course de la séance (indication), ou nil : le même calcul que le réglage (course au temps estimée,
+-- séance en cours seulement ; relecture du 16/11/2026, deux calculs différents).
 local function sessionRaceLaps(app)
+  local n = app.sessionRaceLaps and app.sessionRaceLaps(app.discovery) or nil
+  if n then return n end
+  -- aux essais et en qualification : la course prévue du week-end
   local s = app.discovery and app.discovery.session
   for _, one in ipairs(s and s.sessions or {}) do
     if one.type == 3 and Util.isFinite(one.laps) and one.laps > 0 then return math.floor(one.laps) end

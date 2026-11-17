@@ -267,14 +267,14 @@ function M.evaluate(ev, setup, extraFactors)
     local r = lapRun(ev, setup, samples[ev.middle], extraFactors)
     return r and r.time or math.huge
   end
-  local balance, stability, middleTime, middleLock = 0, 0, 0, 0
+  local balance, stability, middleTime, middleLock, vMax = 0, 0, 0, 0, nil
   for i, k in ipairs(samples) do
     local r = lapRun(ev, setup, k, nil)
     if r == nil then return math.huge, nil end
     times[i] = r.time
     if i == ev.middle then
       balance, stability = Sim.penalties(r)
-      middleTime, middleLock = r.time, r.rearFirstShare
+      middleTime, middleLock, vMax = r.time, r.rearFirstShare, r.vMax
     end
   end
   local mean = stintTotal(ev) / N
@@ -291,7 +291,7 @@ function M.evaluate(ev, setup, extraFactors)
   local w = ev.weights
   local J = mean + w.traffic * traffic + w.bal * balance + w.stab * K.raceStabFactor * stability
   return J, { mean = mean, traffic = traffic, trafficLock = trafficLock, balance = balance, stability = stability,
-    middleTime = middleTime }
+    middleTime = middleTime, vMax = vMax }
 end
 
 -- Relais exact (tous les tours, air libre), pour le résultat affiché.

@@ -8,7 +8,7 @@ local M = {}
 M.appName = 'SetupLab'
 -- Première bêta publique (décision de Vincent du 22/10/2026 : « on la présentera comme la version bêta numéro
 -- un, v1.0 ») ; les versions 1.0.0 à 1.7.0 d'avant étaient internes (CHANGELOG.md).
-M.version = '1.0.0-beta.2.0.1'
+M.version = '1.0.0-beta.2.0.2'
 M.milestone = 'J0 à J8 (qualification, course, mesure, DRS, ERS, interface, persistance), chargement dans la voiture, affinage, pluie, '
   .. 'activation, mémoire du circuit, validation avant enregistrement, vos temps réels, vos retouches gardées'
 M.schemaVersion = 1   -- version du format de stockage (§13) ; une version plus récente est ignorée
@@ -30,7 +30,6 @@ M.EDITABLE = { 'compoundChoice', 'fuelMarginPct', 'fuelQualiLaps', 'perfStab', '
 -- « Pluie » sous la pluie ; versions « _vN », numérotées à la suite sur le circuit.
 M.exportTestPrefix = 'SetupLab_Test_'
 M.fileDefaultName = 'SetupLab'
-M.fileGenre = { quali = 'Qualif', race = 'Course' }
 -- Copie du setup en cours écrite juste avant un chargement dans la voiture (réversibilité).
 M.exportBackupPrefix = 'SetupLab_Avant_chargement_'
 
@@ -455,6 +454,14 @@ M.K = {
   brakeBiasMax = 0.95,
   optSteps = { 4, 2, 1 },     -- pas (crans) de la descente de coordonnées, du plus grand au plus petit
   camberTenth = 0.1,          -- carrossage des fichiers de setup en dixièmes de degré
+  retouchRaceLaps = 3,       -- vos retouches d'un setup de course : tours de course au moins avant de comparer les moyennes
+  retouchMaxChanges = 8,     -- au-delà : un autre setup que la référence, pas une retouche (rien d'enregistré)
+  -- boîte (16/11/2026) : vitesse maxi du circuit dans le dernier rapport, près du limiteur
+  gearTopMarginQuali = 0.01,  -- dernier rapport au limiteur : vitesse maxi du tour + 1 % au moins (tour rapide)
+  gearTopMarginRace = 0.03,   -- + 3 % en course (aspiration)
+  gearTopTol = 0.04,          -- fenêtre : jusqu'à 4 % au-delà
+  gearLimiterNear = 0.005,    -- vitesse maxi à 0,5 % du limiteur du dernier rapport : la piste irait plus vite
+  gearWindowSec = 0.2,        -- s de pénalité par % hors de la fenêtre
   lapTimeEps = 0.0005,        -- s : deux temps au tour égaux à la milliseconde d'AC près
   raceLapsSliderMax = 150,    -- curseur des tours de la course (au-delà : saisie, jusqu'à K.raceMaxLaps)
   roadGripMin = 0.5,          -- grip de la piste hors de 0,5…1,1 : valeur aberrante (relecture du 29/10/2026)
@@ -496,6 +503,9 @@ M.K = {
   recorderMaxGapM = 50,       -- trou de couverture au-delà duquel le tour est rejeté (m)
   recorderMaxSignatures = 4,  -- setups distincts dont le meilleur tour est conservé
   recorderBiasTolerance = 0.002,  -- variation de répartition de freinage tolérée pendant un tour
+  -- avis du 17/11/2026 (Formula Ultra 3.5) : répartition qui va et vient dans le tour, la voiture la règle elle-même
+  -- (script de la voiture) ; tours gardés pour toute la séance de cette voiture
+  recorderBiasAutoSwings = 3,
   maxWheelsOutside = 2,       -- plus de 2 roues hors piste : sortie
   exportLapStepM = 5,         -- pas du tour exporté (m)
   recorderMinStartSpeed = 5,  -- premier échantillon plus lent : départ arrêté (m/s)

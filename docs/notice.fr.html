@@ -202,7 +202,7 @@
 
 <header class="top">
   <div class="inner">
-    <span class="badge">Version 1.0 — bêta 2.0.1</span>
+    <span class="badge">Version 1.0 — bêta 2.0.2</span>
     <p class="switch"><a href="notice.html" hreflang="en">English version</a></p>
     <h1>SetupLab — notice d'utilisation</h1>
     <p class="lead">L'app Custom Shaders Patch qui calcule, explique et affine vos setups dans Assetto Corsa, en se calant sur vos propres tours.</p>
@@ -249,14 +249,14 @@
     <li>un setup de <strong>course</strong> : relais complet, carburant, usure des pneus, trafic. Il part d'un de vos setups de qualification de SetupLab.</li>
   </ul>
   <p>Il lit les fichiers de la voiture (pneus, aéro, moteur, boîte, freins, suspension, différentiel, DRS, ERS) et la ligne IA du circuit, simule le tour, cherche le meilleur setup et <strong>explique chaque réglage</strong> qu'il propose. Il enregistre vos tours pour <strong>caler son modèle sur votre pilotage</strong>, et affine le setup pendant que vous roulez.</p>
-  <div class="note">Vous gardez toujours la main : rien n'est enregistré sans votre clic, chaque réglage proposé est gardé ou refusé par vous, et le setup de la voiture ne change que sur votre clic, au stand.</div>
+  <div class="note">Vous gardez toujours la main : rien de ce que SetupLab propose n'est enregistré sans votre clic (seules vos propres retouches plus rapides d'un setup SetupLab sont gardées, en nouvelle version, et annoncées), chaque réglage proposé est gardé ou refusé par vous, et le setup de la voiture ne change que sur votre clic, au stand.</div>
 </section>
 
 <section id="installation">
   <h2>2. Installation</h2>
   <ol>
     <li>Prérequis : Assetto Corsa avec <strong>Custom Shaders Patch 0.2.11</strong> (la version gratuite, installée par Content Manager) ou plus récent, previews payantes comprises.</li>
-    <li>Décompresser l'archive <code>SetupLab-1.0.0-beta.2.0.1.zip</code> dans <code>assettocorsa/apps/lua/</code> : elle contient déjà le dossier <code>SetupLab/</code>. Au final, <code>assettocorsa/apps/lua/SetupLab/</code> contient <code>SetupLab.lua</code> et <code>manifest.ini</code> (pas de dossier <code>SetupLab</code> dans un autre <code>SetupLab</code>). Pour mettre à jour : fermer Assetto Corsa, <strong>supprimer l'ancien dossier <code>apps/lua/SetupLab</code></strong>, puis décompresser la nouvelle archive. Vos réglages, la mémoire des circuits et vos setups sont gardés : ils sont rangés hors de ce dossier. Depuis la 1.5.4, SetupLab peut aussi se mettre à jour lui-même (voir plus bas).</li>
+    <li>Décompresser l'archive <code>SetupLab-1.0.0-beta.2.0.2.zip</code> dans <code>assettocorsa/apps/lua/</code> : elle contient déjà le dossier <code>SetupLab/</code>. Au final, <code>assettocorsa/apps/lua/SetupLab/</code> contient <code>SetupLab.lua</code> et <code>manifest.ini</code> (pas de dossier <code>SetupLab</code> dans un autre <code>SetupLab</code>). Pour mettre à jour : fermer Assetto Corsa, <strong>supprimer l'ancien dossier <code>apps/lua/SetupLab</code></strong>, puis décompresser la nouvelle archive. Vos réglages, la mémoire des circuits et vos setups sont gardés : ils sont rangés hors de ce dossier. Depuis la 1.5.4, SetupLab peut aussi se mettre à jour lui-même (voir plus bas).</li>
     <li>En jeu, ouvrir <strong>SetupLab</strong> depuis la barre d'apps ou l'écran de setup. Trois autres fenêtres existent : <strong>SetupLab Track</strong> (la même interface, ouverte depuis la barre d'apps en roulant : en course, on part sur la grille), <strong>SetupLab Overlay</strong> (en piste) et <strong>SetupLab Debug</strong> (diagnostic).</li>
   </ol>
     <h3>Mise à jour en jeu</h3>
@@ -484,7 +484,7 @@
   <ul>
     <li>Modifier le contenu d'un fichier, ou la physique du jeu.</li>
     <li>Toucher à vos propres fichiers.</li>
-    <li>Écrire sans votre clic : seuls « Setup par défaut de la voiture » (étape 1), « Essayer », « Enregistrer », « Valider », « Figer » et la copie de sauvegarde avant un chargement écrivent un fichier.</li>
+    <li>Écrire sans votre clic : seuls « Setup par défaut de la voiture » (étape 1), « Essayer », « Enregistrer », « Valider », « Figer » et la copie de sauvegarde avant un chargement écrivent un fichier ; et, voiture arrêtée, une nouvelle version d'un setup SetupLab que vous avez retouché vous-même dans le menu de setup quand il est plus rapide sur vos tours (annoncée à l'écran ; jamais pour un setup figé ni pendant un affinage).</li>
     <li>Changer le setup de la voiture sans votre clic au stand. Quand il charge ainsi un setup de course, le preset sélectionné du menu d'arrêt rapide prend ses pressions et ses pneus (un changement de pneus est alors prévu à l'arrêt) ; carburant et réparations restent les vôtres.</li>
     <li>Envoyer vos données de jeu ou personnelles sur Internet (ni au serveur en ligne), ou fonctionner en replay. Sa seule connexion lit, une fois par lancement, le numéro de la dernière version sur GitHub (réglage décochable) ; une mise à jour ne se télécharge que sur votre clic.</li>
   </ul>
@@ -529,7 +529,7 @@
 
 <footer>
   <div class="inner">
-    SetupLab 1.0 — bêta 2.0.1 (<code>1.0.0-beta.2.0.1</code>) · Licence MIT ·
+    SetupLab 1.0 — bêta 2.0.2 (<code>1.0.0-beta.2.0.2</code>) · Licence MIT ·
     <a href="https://github.com/VincentChevalier44/SetupLab">github.com/VincentChevalier44/SetupLab</a><br>
     Assetto Corsa est une marque de Kunos Simulazioni. SetupLab est un projet indépendant.
   </div>

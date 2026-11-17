@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.0.0-beta.2.0.2 — 2026-11-17 — beta 2.0.2: your faster changes kept, top speed in the last gear
+
+Why this update: drivers often fine-tune a SetupLab setup by hand in AC's setup menu, and those faster changes were lost at the next load. In game, a computed gearbox could also reach top speed before the last gear. A full review of the code then found several smaller defects. From 1.5.4, click **Update** in the SetupLab window.
+
+Your changes kept:
+
+- A SetupLab setup from the track memory, then changed by you in AC's setup menu and faster on your own laps (qualifying: your best lap counted by AC; race: the mean of at least 3 race laps), is saved as the next version once the car is stopped. It becomes the memory reference and the setup to load; the previous version stays in the memory. Fuel and brake bias stay those of the reference file.
+- Never during a refinement (its versions still wait for "Validate"), never for a locked setup, and never when the car's setup has changed again since; each case is said once in the log.
+- When you set the original tyre compound back, your compound change is released as for the other settings.
+
+Gearbox:
+
+- Each computed setup is judged on its own top speed (ERS, DRS and the rev limiter included): the top speed is reached in the last gear, without wasting it. This penalty is left out of the per-setting gains shown, which stay lap time only.
+
+Laps and companion apps:
+
+- Cars that move their brake bias by themselves during the lap (the bias goes back and forth) no longer have every lap rejected for "brake bias changed while driving"; changing the bias on the wheel still sets the lap aside outside a race session.
+- A lap neutralised by AdvancedIA in one session is no longer applied to the same lap number of the next session.
+- When SetupLab is turned off, SpotterEngineer receives an idle state instead of the last published one.
+
+Robustness:
+
+- A setup file found truncated after writing (disk full) goes to the Recycle Bin.
+- The in-game update accepts a version number with trailing spaces.
+- An error while recording a lap no longer stops the computations; the lap in progress is dropped and the error logged once.
+- Saving the track memory waits before retrying after a failure; the Debug report no longer copies car file values.
+
+Offline test bench: 508 tests (11 new).
+
 ## 1.0.0-beta.2.0.1 — 2026-11-16 — beta 2.0.1: race fuel, your race times, gearbox files
 
 Why this update: in game, a race setup planned too little fuel, the track memory showed a simulated time instead of the driver's own race laps, and a full review found that gear settings were written under the wrong section names in setup files. From 1.5.4, click **Update** in the SetupLab window.

@@ -117,6 +117,8 @@ function M.checkZip(entries, version, manifest)
   if not (seen[MAIN] and seen['manifest.ini']) then return nil, 'archive incomplète' end
   local v = type(manifest) == 'string' and manifest:match('[\r\n]VERSION=([^\r\n]+)') or nil
   if v == nil and type(manifest) == 'string' then v = manifest:match('^VERSION=([^\r\n]+)') end
+  -- espaces en fin de ligne ignorés (relecture du 16/11/2026)
+  if v then v = v:match('^%s*(.-)%s*$') end
   if v ~= version then return nil, 'version du manifeste différente' end
   return files
 end
@@ -274,7 +276,8 @@ end
 local function installedVersion(io, appFolder)
   local ok, text = call(io.load, appFolder .. '/manifest.ini')
   if not (ok and type(text) == 'string') then return nil end
-  return text:match('[\r\n]VERSION=([^\r\n]+)') or text:match('^VERSION=([^\r\n]+)')
+  local v = text:match('[\r\n]VERSION=([^\r\n]+)') or text:match('^VERSION=([^\r\n]+)')
+  return v and v:match('^%s*(.-)%s*$')
 end
 
 -- Au clic : téléchargement, contrôles, extraction hors de l'app, vérification des fichiers extraits, remplacement des

@@ -38,7 +38,7 @@ def version_of_config():
 
 def version_of_manifest():
     text = (APP / 'manifest.ini').read_text(encoding='utf-8')
-    m = re.search(r'^VERSION=([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)\s*$', text, re.M)
+    m = re.search(r'^VERSION=([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.]+)?)$', text, re.M)
     if not m:
         sys.exit('VERSION introuvable dans manifest.ini')
     return m.group(1)

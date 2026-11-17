@@ -1081,6 +1081,8 @@ local function refreshContext()
     app.memory, app.memoryFiles = {}, {}
     app.loaded, app.pins, app.start, app.lastLoadKind = {}, { quali = {}, race = {} }, {}, nil
     app.refines, app.manualKind = {}, nil
+    app.retouchPending, app.retouchSeen, app.retouchLogged, app.trialFamilies = nil, nil, nil, nil
+    app.loadNote, app.proposalBuckets, app.lastLoadRequest, app.pitCompoundSet = nil, {}, nil, nil
     app.loadCheck, app.loadTest, app.loadVerified = nil, nil, nil
     app.pitStrategy, app.qualiScan, app.inCar, app.lastDiscovery = nil, nil, nil, nil
     app.acBestSeen, app.recSessionKey = nil, c.conditionsKey
@@ -1098,7 +1100,7 @@ local function refreshContext()
   -- la nouvelle séance avant sa confirmation
   if c.conditionsKey and c.conditionsKey ~= app.recSessionKey then
     if app.recSessionKey then
-      Recorder.newSession(app.recorder)
+      Recorder.newSession(app.recorder); app.Companion.newSession(app.companion)
       app.acBestSeen = nil
       app.wet.pending, app.wet.pendingSince = nil, nil
     end
@@ -1424,7 +1426,7 @@ local function acBestCheck(lap)
   if not (Util.isFinite(ms) and ms > 0) then
     -- chrono d'AC remis à zéro (séance recommencée, même clé de séance) : vos meilleurs tours aussi
     if app.acBestSeen and Util.isFinite(ms) then
-      Recorder.newSession(app.recorder)
+      Recorder.newSession(app.recorder); app.Companion.newSession(app.companion)
       recreditLap(lap, false)
       app.acBestSeen = nil
     end
@@ -1434,7 +1436,7 @@ local function acBestCheck(lap)
   if app.acBestSeen and math.abs(best - app.acBestSeen) < K.lapTimeEps then return end
   -- chrono d'AC plus lent qu'avant : séance recommencée (même clé de séance) ; vos meilleurs tours repartent de zéro
   if app.acBestSeen and best > app.acBestSeen then
-    Recorder.newSession(app.recorder)
+    Recorder.newSession(app.recorder); app.Companion.newSession(app.companion)
     recreditLap(lap, true)
   end
   app.acBestSeen = best
@@ -1511,8 +1513,13 @@ local function onLap(lap)
     .. tostring(lap.incident or 'trafic') .. ')') or nil
   log('INFO', 'lap', 'Tour enregistré : ' .. Util.fmt(lap.time, 3) .. ' s, ' .. (raceOnly or lap.valid and 'valide' or
     ('rejeté (' .. tostring(lap.reason) .. ')' .. (lap.acValid and ' ; compté dans vos temps d\'AC' or ''))))
+  if lap.biasAuto then
+    log('INFO', 'lap', 'Répartition de freinage réglée par la voiture elle-même (elle va et vient dans le tour) : '
+      .. 'ses variations ne rejettent plus les tours de cette voiture.')
+  end
   acBestCheck(lap)
   memoryLap(lap)
+  if app.retouchCheck then app.retouchCheck(lap) end
   app.fuelSample(lap)
   -- meilleur tour d'AC dans le nom des fichiers de qualification (renommés voiture arrêtée)
   if app.queueBestRename then app.queueBestRename(lap) end
@@ -1630,7 +1637,14 @@ local function recordFrame()
   rc.raceSession = raceSession()
   rc.raceRules = rc.raceSession or (r ~= nil and r.active == true and r.kind == 'race')
   local lap = Recorder.update(app.recorder, host, app.now, liveSignature, rc)
-  if lap then onLap(lap) end
+  -- suites du tour (mémoire, affinage, retouches) protégées à part : une erreur n'abandonne pas le tour qui commence
+  if lap then
+    local okL, errL = pcall(onLap, lap)
+    if not okL then
+      app.perf.errors = app.perf.errors + 1
+      log('ERROR', 'lap', errL)
+    end
+  end
 end
 
 -- Mode inerte vu dès la frame (le contexte n'est relu qu'à 1 Hz) : en ligne avec « Actif en ligne » décoché
@@ -1648,8 +1662,8 @@ local function inertNow(sim)
 end
 
 -- Écriture du stockage ; chaque entrée retirée par la purge (stockage plein) est journalisée.
-function app.storeFlush()
-  local written = Store.flush(app.store)
+function app.storeFlush(force)
+  local written = Store.flush(app.store, force)
   local purged = app.store.purged
   if purged then
     app.store.purged = nil
@@ -1756,8 +1770,13 @@ function app.companionState()
 end
 
 -- Une image : liaison avec AdvancedIA (ouverte une fois), contexte de l'enregistreur, publication de SetupLab.state.
-function app.companionTick()
+function app.companionTick(sim)
   local C, c = app.Companion, app.companion
+  local sess = Util.num(sim, 'currentSessionIndex')
+  if sess ~= nil and sess ~= app.companionSess then
+    if app.companionSess ~= nil then C.newSession(c) end
+    app.companionSess = sess
+  end
   if not c.opened then
     C.detect(c, host)
     C.open(c, host)
@@ -1785,7 +1804,10 @@ end
 
 local function update(dt)
   app.frameNo = (app.frameNo or 0) + 1
-  if not app.settings.enabled then return end
+  if not app.settings.enabled then
+    if app.companion then app.Companion.publishIdle(app.companion, host) end
+    return
+  end
   local frameStarted = app.clock and app.clock() or nil
   local okSim, sim = Util.call(Util.get(host.ac, 'getSim'))
   local fps = okSim and Util.num(sim, 'fps') or nil
@@ -1805,10 +1827,18 @@ local function update(dt)
     -- rien n'est écrit en replay ni en pause en ligne (I09) ; le mode en ligne s'écrit à part, tout de suite
     if not app.inert then app.storeFlush() end
   end
-  app.companionTick()
+  app.companionTick(okSim and sim or nil)
   if okSim and not inertNow(sim) then
     app.recordContext.paused = Util.get(sim, 'isPaused') == true
-    recordFrame()
+    -- une erreur de l'enregistreur ne gèle pas les calculs ni les fichiers de l'image (relecture du 16/11/2026) ; le tour
+    -- en cours est abandonné, chaque erreur journalisée une fois
+    local okRec, errRec = pcall(recordFrame)
+    if not okRec then
+      app.perf.errors = app.perf.errors + 1
+      if errRec ~= app.recordError then log('ERROR', 'record', errRec) end
+      app.recordError = errRec
+      pcall(Recorder.abort, app.recorder, 'erreur')
+    end
   elseif app.recorder.state ~= 'attente' then
     Recorder.abort(app.recorder, 'mode inerte')
   end
@@ -1843,6 +1873,13 @@ local function update(dt)
     if not okF then
       app.perf.errors = app.perf.errors + 1
       log('ERROR', 'files', errF)
+    end
+  end
+  if app.retouchPending and app.retouchTick then
+    local okR, errR = pcall(app.retouchTick)
+    if not okR then
+      app.perf.errors = app.perf.errors + 1
+      log('ERROR', 'retouch', errR)
     end
   end
   if app.scheduler.callbackErrors then app.schedulerErrors() end
@@ -3149,9 +3186,20 @@ local function detectPins(d)
       end
     end
   end
-  local tyres = loaded.values.TYRES
-  if pins.TYRES == nil and type(tyres) == 'number' and d.compoundIndex and tyres ~= d.compoundIndex then
-    pins.TYRES = { value = d.compoundIndex, from = tyres }
+  local tyres, pin = loaded.values.TYRES, pins.TYRES
+  if type(tyres) == 'number' and d.compoundIndex then
+    if pin == nil and tyres ~= d.compoundIndex then
+      pins.TYRES = { value = d.compoundIndex, from = tyres }
+    elseif pin and not pin.refused then
+      -- relecture du 16/11/2026 : revenu au composé d'origine, celui du setup chargé, la retouche restait et imposait
+      -- l'ancien choix ; une version qui garde votre composé le garde
+      if d.compoundIndex == pin.from and tyres == pin.from then
+        pins.TYRES = nil
+        log('INFO', 'pins', 'Retouche libérée (' .. kind .. ') : TYRES revenu à ' .. tostring(tyres))
+      else
+        pin.value = d.compoundIndex
+      end
+    end
   end
 end
 app.detectPins = detectPins
@@ -3753,6 +3801,14 @@ local function refineFinish(r, q)
     r.waiting = 'v' .. r.choice .. ' validée : continuer l\'affinage ou la figer ?'
     return
   end
+  -- une version passée en essai pendant le calcul : une seule version ouverte à la fois (relecture du 16/11/2026)
+  for _, e in ipairs(r.history) do
+    if e.version and e.status == 'essai' then
+      r.waiting = 'v' .. e.version .. ' en essai : roulez avec elle, puis validez-la (« Modifier… » pour refuser un réglage) '
+        .. 'ou recommencez'
+      return
+    end
+  end
   local result = q.result
   local gain = (result.timeCurrent or 0) - (result.timeProposed or 0)
   local note = { bucket = q.conditions and q.conditions.bucket or 'sec', timeCurrent = result.timeCurrent,
@@ -3796,7 +3852,8 @@ local function refineFinish(r, q)
     else
       local e = pending
       if e == nil then
-        r.version = r.version + 1
+        -- après vos retouches enregistrées (2.0.2), le numéro suivant les leurs
+        r.version = math.max(r.version + 1, app.nextVersion(r.kind))
         e = { version = r.version, updates = 0 }
         r.history[#r.history + 1] = e
       elseif known == nil then
@@ -4048,6 +4105,15 @@ local function refineStart(kind)
   end
   -- un seul affinage actif : celui d'un autre genre s'arrête (il se reprendra tel quel)
   if app.refine and app.refine.active then refineStop() end
+  for _, e in ipairs(prev and prev.history or {}) do
+    if e.version and e.status == 'essai' and e.trial and app.written[e.trial.file] == e.trial.hash then
+      queueFileOp({ op = 'corbeille', name = e.trial.file, hash = e.trial.hash,
+        why = 'essai de v' .. e.version .. ' abandonné (nouvel affinage)' })
+      if app.saved[kind] and app.saved[kind].name == e.trial.file then app.saved[kind] = nil end
+      app.trialFamilies = app.trialFamilies or {}
+      if e.family then app.trialFamilies[e.family] = true end
+    end
+  end
   local base = lastVersionOnDisk(kind)
   app.refine = { kind = kind, active = true, phase = 'tours', version = base, base = base, laps = 0, history = {},
     rejected = {}, sessionKey = app.conditionsKey, startRef = app.start[kind] }
@@ -4106,6 +4172,199 @@ end
 
 local function memoryKind(group)
   return group == 'course' and 'race' or 'quali'
+end
+
+-- Vos retouches d'un setup de SetupLab (décision de Vincent du 16/11/2026 : « il doit enregistrer un setup modifié ainsi
+-- que son temps s'il est meilleur ») : un setup de la mémoire roulé (ou chargé par SetupLab) puis retouché dans le menu de
+-- setup, plus rapide en temps réels (tour rapide : meilleur tour compté par AC ; course : moyenne d'au moins
+-- K.retouchRaceLaps tours de course), jamais contre un temps simulé, devient une nouvelle version : fichier écrit voiture
+-- arrêtée, référence de la mémoire, setup à charger. Une référence figée n'est jamais remplacée.
+-- Cases de la mémoire dont le setup a pu être retouché en ce setup (famille) : roulées ou chargées par SetupLab dans ce
+-- lancement ; la plus proche du setup de la voiture est choisie voiture arrêtée (relecture du 16/11/2026 : setup de course
+-- retouché, setup de qualif aussi roulé).
+function app.retouchSlots(family, bucket)
+  local list = {}
+  for key, m in pairs(app.memory) do
+    local rr = app.refines[memoryKind(m.group)]
+    -- affinage actif de ce genre : ses versions passent par « Valider » (rien d'enregistré sans un clic)
+    if m.bucket == bucket and m.problem == nil and m.family and m.family ~= family and m.text and m.file
+        and not (rr and rr.active) then
+      local loaded = app.loaded[memoryKind(m.group)]
+      local driven = app.recorder.laps.family[Recorder.bestKey(m.family, bucket)] ~= nil
+      if driven or (loaded and loaded.name == m.file) then list[#list + 1] = key end
+    end
+  end
+  table.sort(list)
+  return list
+end
+
+-- Vos temps réels avec ce setup plus rapides que ceux de la case m : { best | mean, laps, was }, ou nil.
+function app.retouchGain(m, f)
+  if m.group == 'course' then
+    local n = f and f.raceCount or 0
+    if n >= K.retouchRaceLaps and Util.isFinite(m.mean) and (m.laps or 0) > 0 and f.raceSum / n < m.mean - K.lapTimeEps then
+      return { mean = f.raceSum / n, laps = n, was = m.mean }
+    end
+  else
+    -- meilleur tour compté par AC avec ce setup dans la séance (un tour plus lent ensuite ne l'efface pas)
+    local best = f and f.acBest
+    if Util.isFinite(best) and Util.isFinite(m.best) and best < m.best - K.lapTimeEps then return { best = best, was = m.best } end
+  end
+  return nil
+end
+
+-- À chaque tour : vos retouches plus rapides qu'une référence (temps réels) sont mises en attente d'enregistrement.
+function app.retouchCheck(lap)
+  if app.inert or lap.family == nil or not app.discovery then return end
+  app.retouchSeen = app.retouchSeen or {}
+  local key = Recorder.bestKey(lap.family, lap.bucket)
+  if app.retouchSeen[key] then return end
+  for _, m in pairs(app.memory) do
+    local e, depth = m, 0
+    while e and depth < 50 do
+      if e.family == lap.family and m.bucket == lap.bucket then return end
+      e, depth = e.replaced, depth + 1
+    end
+  end
+  -- une version de l'affinage (calculée ou en essai) n'est pas une retouche : elle attend « Valider »
+  if app.trialFamilies and app.trialFamilies[lap.family] then return end
+  for _, r in pairs(app.refines) do
+    for _, e in ipairs(r.history or {}) do
+      if e.family == lap.family or e.trialFamily == lap.family or (e.trial and e.trial.family == lap.family) then return end
+    end
+  end
+  local f = app.recorder.laps.family[key]
+  local slots, gains, any = app.retouchSlots(lap.family, lap.bucket), {}, false
+  for _, slot in ipairs(slots) do
+    gains[slot] = app.retouchGain(app.memory[slot], f) or false
+    any = any or gains[slot] ~= false
+  end
+  -- recalculé à chaque tour jusqu'à l'arrêt (relecture du 16/11/2026 : un premier tour plus rapide que la qualif figeait la
+  -- décision avant que la moyenne de course ait ses tours) ; décidé une fois pour toutes à l'écriture ou devant un setup figé
+  if not any then
+    app.retouchPending = nil
+    return
+  end
+  local known = app.retouchPending and app.retouchPending.family == lap.family
+  app.retouchPending = { family = lap.family, bucket = lap.bucket, slots = slots, gains = gains }
+  if not known then log('INFO', 'retouch', 'Vos retouches sont plus rapides : enregistrées voiture arrêtée.') end
+end
+
+-- Crans retouchés du setup de la voiture par rapport au texte d'une référence (carburant et répartition de freinage : les
+-- siens) : valeurs et nombre, ou nil (valeur non entière).
+function app.retouchValues(live, ref)
+  local values, n = {}, 0
+  for name, value in pairs(live) do
+    local other = ref[name]
+    if not K.familyIgnored[name] and other ~= nil and value ~= other then
+      if not (Util.isFinite(value) and value == math.floor(value)) then return nil end
+      values[name], n = value, n + 1
+    end
+  end
+  return values, n
+end
+
+-- Numéro de la prochaine version d'un genre : fichiers, mémoire, et versions des affinages (même en attente, sans fichier).
+function app.nextVersion(kind)
+  local top = lastVersionOnDisk(kind)
+  local r = app.refines[kind]
+  if r then
+    top = math.max(top, r.version or 0)
+    for _, e in ipairs(r.history or {}) do
+      if Util.isFinite(e.version) and e.version > top then top = e.version end
+    end
+  end
+  return top + 1
+end
+
+-- Une ligne de journal par setup roulé et par raison (vérifié à chaque arrêt).
+function app.retouchLog(family, text)
+  app.retouchLogged = app.retouchLogged or {}
+  local key = tostring(family) .. '|' .. text
+  if app.retouchLogged[key] then return end
+  app.retouchLogged[key] = true
+  log('INFO', 'retouch', text)
+end
+
+-- Voiture arrêtée, aucun chargement ni rangement en cours : le setup retouché, encore dans la voiture, est écrit.
+function app.retouchTick()
+  local pending = app.retouchPending
+  if pending == nil or app.inert or app.loadCheck or #app.fileOps > 0 or not carStopped() then return end
+  local d = app.discovery
+  if not (d and d.setup) then return end
+  local ok, liveText = Util.call(Util.get(host.ac, 'stringifyCurrentSetup'), true, false)
+  if not (ok and type(liveText) == 'string') then return end
+  app.retouchPending = nil
+  local live = setupValues(liveText)
+  -- la référence la plus proche du setup de la voiture (moins de crans retouchés)
+  local m, values, n, slot = nil, nil, math.huge, nil
+  for _, key in ipairs(pending.slots) do
+    local c = app.memory[key]
+    local v, k = nil, nil
+    if c and c.text then v, k = app.retouchValues(live, setupValues(c.text)) end
+    if v and k < n then m, values, n, slot = c, v, k, key end
+  end
+  if m == nil then
+    app.retouchLog(pending.family, 'Retouches non enregistrées : réglage non entier, setup non comparable à la référence.')
+    return
+  end
+  local p = pending.gains[slot]
+  if not p then
+    app.retouchLog(pending.family, 'Retouches de ' .. m.file .. ' non enregistrées : pas plus rapides que ce setup.')
+    return
+  end
+  local seenKey = Recorder.bestKey(pending.family, pending.bucket)
+  if m.locked then
+    app.retouchSeen[seenKey] = true
+    app.ui.message = 'Vos retouches de ' .. m.file .. ' sont plus rapides, mais ce setup est figé (' .. memoryTitle(m)
+      .. ') : rien n\'est enregistré.'
+    log('INFO', 'retouch', app.ui.message)
+    return
+  end
+  p.family, p.bucket = pending.family, pending.bucket
+  local text = n > 0 and n <= K.retouchMaxChanges and SetupSpace.render(m.text, values) or nil
+  local signature, family = nil, nil
+  if text then signature, family = fileSignatures(d, setupValues(text)) end
+  if family ~= p.family then
+    app.retouchLog(pending.family, 'Retouches de ' .. m.file .. ' non enregistrées : ' .. (n > K.retouchMaxChanges
+      and ('trop de réglages différents (' .. n .. '), un autre setup que la référence') or 'setup de la voiture changé depuis')
+      .. '.')
+    return
+  end
+  local kind = memoryKind(m.group)
+  local version = app.nextVersion(kind)
+  local base = fileBase(kind, p.bucket) .. '_v' .. version
+  if p.best then base = Util.withLapTime(base, p.best) or base end
+  local w = Exporter.writeNew(host, base, text)
+  if not w.ok then
+    app.ui.message = 'Vos retouches de ' .. m.file .. ' n\'ont pas pu être enregistrées (' .. tostring(w.reason) .. ').'
+    log('WARN', 'retouch', app.ui.message)
+    return
+  end
+  app.retouchSeen[seenKey] = true
+  local hash = Util.hashString(text)
+  app.written[w.name] = hash; app.writtenGen = app.writtenGen + 1
+  local entry = { group = m.group, bucket = m.bucket, file = w.name, hash = hash, version = version, locked = false,
+    path = w.path, text = text, signature = signature, family = family, origin = m.origin, carId = m.carId,
+    best = p.best, mean = p.mean, laps = p.laps, replaced = m, retouched = true }
+  memoryPut(entry)
+  if kind == 'quali' then validatedPut(w.name, hash, version) end
+  setLoadTarget(kind, entry)
+  -- le setup de la voiture est désormais ce fichier : référence des retouches suivantes (comme un chargement par le menu)
+  local kept = {}
+  for name, pin in pairs(app.pins[kind] or {}) do
+    if pin.refused then kept[name] = pin end
+  end
+  app.loaded[kind], app.lastLoadKind, app.pins[kind] = { values = setupValues(text), name = w.name }, kind, kept
+  queueBackupCleanup()
+  local saved = { file = w.name }
+  Store.put(app.store, storeKey('last', d, kind), saved, stamp())
+  app.lastSaved = app.lastSaved or {}
+  app.lastSaved[kind] = saved
+  app.ui.message = 'Vos retouches de ' .. m.file .. ' sont plus rapides (' .. Ui.lapTime(p.best or p.mean) .. ' contre '
+    .. Ui.lapTime(p.was) .. ') : enregistrées en v' .. version .. ' (' .. w.name .. '), setup de référence ('
+    .. memoryTitle(entry) .. ') gardé en mémoire.'
+  log('INFO', 'retouch', app.ui.message)
 end
 
 -- Écrit le fichier d'une version, à sa validation seulement (décision de Vincent du 21/10/2026) : nom choisi
@@ -4676,7 +4935,7 @@ local function applySetting(key, value)
       log('INFO', 'setting', def.label .. ' : ' .. tostring(valid))
       -- mode en ligne : changé même en pause (seule exception), écrit tout de suite et pris en compte dès l'image suivante
       if key == 'onlineActive' then
-        app.storeFlush()
+        app.storeFlush(true)
         app.nextContextAt = 0
       end
     end
@@ -4851,7 +5110,7 @@ local function handleIntents(intents)
     app.ui.message = 'Mise à jour : au stand, voiture arrêtée (CSP recharge SetupLab juste après).'
   elseif intents.updateApply and canApply then
     -- rien de perdu au rechargement : le stockage est écrit d'abord
-    app.storeFlush()
+    app.storeFlush(true)
     local okA, appDir = Util.call(Util.get(host.ac, 'getFolder'), Util.get(Util.get(host.ac, 'FolderID'), 'ScriptOrigin'))
     local okT, tempDir = Util.call(Util.get(host.ac, 'getFolder'), Util.get(Util.get(host.ac, 'FolderID'), 'AppDataTemp'))
     local version = app.updater.info and app.updater.info.version
@@ -4914,7 +5173,7 @@ local function release()
   if app.released then return end
   app.released = true
   -- dernières entrées (tour compté, réglage) écrites avant le déchargement de l'app (jamais en mode inerte)
-  if not app.inert then pcall(app.storeFlush) end
+  if not app.inert then pcall(app.storeFlush, true) end
   Util.schedulerCancel(app.scheduler)
   for _, dispose in ipairs(app.disposers) do pcall(dispose) end
   app.disposers = {}
